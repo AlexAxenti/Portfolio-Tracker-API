@@ -1,3 +1,4 @@
+using PortfolioTracker.Api.Auth;
 using PortfolioTracker.Api.DTOs.Trades;
 using PortfolioTracker.Api.Entities;
 using PortfolioTracker.Api.Repositories;
@@ -6,14 +7,11 @@ namespace PortfolioTracker.Api.Services;
 
 public sealed class TradesService(
     ITradesRepository tradesRepository,
-    IHoldingsRepository holdingsRepository,
     IHoldingsService holdingsService) : ITradesService
 {
-    private static readonly Guid MockUserId = Guid.Parse("550e8400-e29b-41d4-a716-446655440000");
-
     public async Task<IReadOnlyList<TradeDto>> GetTradesAsync()
     {
-        var trades = await tradesRepository.GetAllAsync(MockUserId);
+        var trades = await tradesRepository.GetAllAsync(MockUserContext.UserId);
         return trades.Select(MapTrade).ToList();
     }
 
@@ -24,12 +22,12 @@ public sealed class TradesService(
         var trade = new TradeEntity
         {
             Id = Guid.NewGuid(),
-            UserId = MockUserId,
+            UserId = MockUserContext.UserId,
             Ticker = NormalizeTicker(request.Ticker),
             Type = request.Type,
             Quantity = request.Quantity,
             Price = RoundToThreeDecimals(request.Price),
-            TradeDate = request.TradeDate,
+            TradeDate = NormalizeUtc(request.TradeDate),
             Notes = CleanOptionalText(request.Notes),
             CreatedAt = DateTime.UtcNow
         };
@@ -44,7 +42,7 @@ public sealed class TradesService(
     {
         ValidateTrade(request.Ticker, request.Type, request.Quantity, request.Price);
 
-        var existingTrade = await tradesRepository.GetByIdAsync(id, MockUserId);
+        var existingTrade = await tradesRepository.GetByIdAsync(id, MockUserContext.UserId);
 
         if (existingTrade is null)
         {
@@ -59,13 +57,12 @@ public sealed class TradesService(
             Type = request.Type,
             Quantity = request.Quantity,
             Price = RoundToThreeDecimals(request.Price),
-            TradeDate = request.TradeDate,
+            TradeDate = NormalizeUtc(request.TradeDate),
             Notes = CleanOptionalText(request.Notes),
             CreatedAt = existingTrade.CreatedAt
         };
 
         await holdingsService.ReverseTradeAsync(existingTrade);
-        await holdingsRepository.DeleteSellSnapshotAsync(existingTrade.Id);
 
         try
         {
@@ -90,7 +87,7 @@ public sealed class TradesService(
 
     public async Task<bool> DeleteTradeAsync(Guid id)
     {
-        var existingTrade = await tradesRepository.GetByIdAsync(id, MockUserId);
+        var existingTrade = await tradesRepository.GetByIdAsync(id, MockUserContext.UserId);
 
         if (existingTrade is null)
         {
@@ -98,7 +95,6 @@ public sealed class TradesService(
         }
 
         await holdingsService.ReverseTradeAsync(existingTrade);
-        await holdingsRepository.DeleteSellSnapshotAsync(existingTrade.Id);
         await tradesRepository.DeleteAsync(existingTrade);
         return true;
     }
@@ -154,5 +150,15 @@ public sealed class TradesService(
     private static decimal RoundToThreeDecimals(decimal value)
     {
         return Math.Round(value, 3, MidpointRounding.AwayFromZero);
+    }
+
+    private static DateTime NormalizeUtc(DateTime value)
+    {
+        return value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+        };
     }
 }

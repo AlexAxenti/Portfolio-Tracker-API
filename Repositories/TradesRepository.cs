@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using PortfolioTracker.Api.Data;
 using PortfolioTracker.Api.Entities;
 
@@ -5,39 +6,38 @@ namespace PortfolioTracker.Api.Repositories;
 
 public sealed class TradesRepository(AppDbContext dbContext) : ITradesRepository
 {
-    public Task<IReadOnlyList<TradeEntity>> GetAllAsync(Guid userId)
+    public async Task<IReadOnlyList<TradeEntity>> GetAllAsync(Guid userId)
     {
-        var trades = dbContext.Trades
+        return await dbContext.Trades
+            .AsNoTracking()
             .Where(trade => trade.UserId == userId)
             .OrderByDescending(trade => trade.TradeDate)
             .ThenByDescending(trade => trade.CreatedAt)
-            .ToList();
-
-        return Task.FromResult<IReadOnlyList<TradeEntity>>(trades);
+            .ToListAsync();
     }
 
-    public Task<TradeEntity?> GetByIdAsync(Guid id, Guid userId)
+    public async Task<TradeEntity?> GetByIdAsync(Guid id, Guid userId)
     {
-        var trade = dbContext.Trades.FirstOrDefault(trade =>
-            trade.Id == id && trade.UserId == userId);
-
-        return Task.FromResult(trade);
+        return await dbContext.Trades
+            .AsNoTracking()
+            .FirstOrDefaultAsync(trade => trade.Id == id && trade.UserId == userId);
     }
 
-    public Task AddAsync(TradeEntity trade)
+    public async Task AddAsync(TradeEntity trade)
     {
-        dbContext.Trades.Add(trade);
-        return Task.CompletedTask;
+        await dbContext.Trades.AddAsync(trade);
+        await dbContext.SaveChangesAsync();
     }
 
-    public Task UpdateAsync(TradeEntity trade)
+    public async Task UpdateAsync(TradeEntity trade)
     {
-        return Task.CompletedTask;
+        dbContext.Trades.Update(trade);
+        await dbContext.SaveChangesAsync();
     }
 
-    public Task DeleteAsync(TradeEntity trade)
+    public async Task DeleteAsync(TradeEntity trade)
     {
         dbContext.Trades.Remove(trade);
-        return Task.CompletedTask;
+        await dbContext.SaveChangesAsync();
     }
 }

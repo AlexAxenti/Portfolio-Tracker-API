@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.EntityFrameworkCore;
 using PortfolioTracker.Api.Data;
 using PortfolioTracker.Api.Repositories;
 using PortfolioTracker.Api.Services;
@@ -14,7 +15,11 @@ builder.Services.AddControllers()
     });
 builder.Services.AddOpenApi();
 
-builder.Services.AddSingleton<AppDbContext>();
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
+
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(connectionString));
 builder.Services.AddScoped<IHoldingsRepository, HoldingsRepository>();
 builder.Services.AddScoped<ITradesRepository, TradesRepository>();
 builder.Services.AddScoped<IHoldingsService, HoldingsService>();

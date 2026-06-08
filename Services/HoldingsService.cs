@@ -1,3 +1,4 @@
+using PortfolioTracker.Api.Auth;
 using PortfolioTracker.Api.DTOs.Holdings;
 using PortfolioTracker.Api.Entities;
 using PortfolioTracker.Api.Repositories;
@@ -6,24 +7,22 @@ namespace PortfolioTracker.Api.Services;
 
 public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IHoldingsService
 {
-    private static readonly Guid MockUserId = Guid.Parse("550e8400-e29b-41d4-a716-446655440000");
-
     public async Task<IReadOnlyList<HoldingDto>> GetHoldingsAsync()
     {
-        var holdings = await holdingsRepository.GetAllAsync(MockUserId);
+        var holdings = await holdingsRepository.GetAllAsync(MockUserContext.UserId);
         return MapHoldings(holdings);
     }
 
     public async Task<HoldingDto?> GetHoldingAsync(Guid id)
     {
-        var holding = await holdingsRepository.GetByIdAsync(id, MockUserId);
+        var holding = await holdingsRepository.GetByIdAsync(id, MockUserContext.UserId);
 
         if (holding is null)
         {
             return null;
         }
 
-        var holdings = await holdingsRepository.GetAllAsync(MockUserId);
+        var holdings = await holdingsRepository.GetAllAsync(MockUserContext.UserId);
         var totalPortfolioValue = CalculateTotalPortfolioValue(holdings);
         return MapHolding(holding, totalPortfolioValue);
     }
@@ -39,13 +38,13 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
         var holding = new HoldingEntity
         {
             Id = Guid.NewGuid(),
-            UserId = MockUserId,
+            UserId = MockUserContext.UserId,
             Ticker = ticker,
             CompanyName = CleanOptionalText(request.CompanyName),
             ShareCount = request.ShareCount,
             AverageCost = RoundToThreeDecimals(request.AverageCost),
             CurrentPrice = request.CurrentPrice is null ? null : RoundToThreeDecimals(request.CurrentPrice.Value),
-            PriceLastUpdatedAt = request.PriceLastUpdatedAt,
+            PriceLastUpdatedAt = NormalizeUtc(request.PriceLastUpdatedAt),
             Sector = CleanOptionalText(request.Sector),
             Categories = NormalizeCategories(request.Categories),
             Notes = CleanOptionalText(request.Notes),
@@ -55,7 +54,7 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
         };
 
         await holdingsRepository.AddAsync(holding);
-        var holdings = await holdingsRepository.GetAllAsync(MockUserId);
+        var holdings = await holdingsRepository.GetAllAsync(MockUserContext.UserId);
         return MapHolding(holding, CalculateTotalPortfolioValue(holdings));
     }
 
@@ -63,7 +62,7 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
     {
         ValidateHolding(request.Ticker, request.ShareCount, request.AverageCost);
 
-        var holding = await holdingsRepository.GetByIdAsync(id, MockUserId);
+        var holding = await holdingsRepository.GetByIdAsync(id, MockUserContext.UserId);
 
         if (holding is null)
         {
@@ -78,7 +77,7 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
         holding.ShareCount = request.ShareCount;
         holding.AverageCost = RoundToThreeDecimals(request.AverageCost);
         holding.CurrentPrice = request.CurrentPrice is null ? null : RoundToThreeDecimals(request.CurrentPrice.Value);
-        holding.PriceLastUpdatedAt = request.PriceLastUpdatedAt;
+        holding.PriceLastUpdatedAt = NormalizeUtc(request.PriceLastUpdatedAt);
         holding.Sector = CleanOptionalText(request.Sector);
         holding.Categories = NormalizeCategories(request.Categories);
         holding.Notes = CleanOptionalText(request.Notes);
@@ -86,13 +85,13 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
         holding.UpdatedAt = DateTime.UtcNow;
 
         await holdingsRepository.UpdateAsync(holding);
-        var holdings = await holdingsRepository.GetAllAsync(MockUserId);
+        var holdings = await holdingsRepository.GetAllAsync(MockUserContext.UserId);
         return MapHolding(holding, CalculateTotalPortfolioValue(holdings));
     }
 
     public async Task<bool> DeleteHoldingAsync(Guid id)
     {
-        var holding = await holdingsRepository.GetByIdAsync(id, MockUserId);
+        var holding = await holdingsRepository.GetByIdAsync(id, MockUserContext.UserId);
 
         if (holding is null)
         {
@@ -127,7 +126,7 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
 
     private async Task ApplyBuyTradeAsync(TradeEntity trade)
     {
-        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, MockUserId);
+        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, MockUserContext.UserId);
         var now = DateTime.UtcNow;
 
         if (holding is null)
@@ -135,7 +134,7 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
             await holdingsRepository.AddAsync(new HoldingEntity
             {
                 Id = Guid.NewGuid(),
-                UserId = MockUserId,
+                UserId = MockUserContext.UserId,
                 Ticker = trade.Ticker,
                 ShareCount = trade.Quantity,
                 AverageCost = RoundToThreeDecimals(trade.Price),
@@ -159,7 +158,7 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
 
     private async Task ApplySellTradeAsync(TradeEntity trade)
     {
-        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, MockUserId);
+        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, MockUserContext.UserId);
 
         if (holding is null)
         {
@@ -170,8 +169,6 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
         {
             throw new InvalidOperationException($"You only own {holding.ShareCount} shares of {trade.Ticker}.");
         }
-
-        await holdingsRepository.StoreSellSnapshotAsync(trade.Id, holding);
 
         var remainingShares = holding.ShareCount - trade.Quantity;
 
@@ -188,7 +185,7 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
 
     private async Task ReverseBuyTradeAsync(TradeEntity trade)
     {
-        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, MockUserId);
+        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, MockUserContext.UserId);
 
         if (holding is null || holding.ShareCount < trade.Quantity)
         {
@@ -218,31 +215,22 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
 
     private async Task ReverseSellTradeAsync(TradeEntity trade)
     {
-        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, MockUserId);
-        var previousHolding = await holdingsRepository.GetSellSnapshotAsync(trade.Id);
+        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, MockUserContext.UserId);
         var now = DateTime.UtcNow;
 
         if (holding is null)
         {
-            if (previousHolding is null)
-            {
-                throw new InvalidOperationException($"Cannot safely reverse the {trade.Ticker} sell trade.");
-            }
-
-            previousHolding.UpdatedAt = now;
-            await holdingsRepository.AddAsync(previousHolding);
-            return;
+            throw new InvalidOperationException($"Cannot safely reverse the {trade.Ticker} sell trade.");
         }
 
         holding.ShareCount += trade.Quantity;
-        holding.AverageCost = RoundToThreeDecimals(previousHolding?.AverageCost ?? holding.AverageCost);
         holding.UpdatedAt = now;
         await holdingsRepository.UpdateAsync(holding);
     }
 
     private async Task EnsureTickerIsAvailableAsync(string ticker, Guid? ignoredHoldingId = null)
     {
-        var duplicate = await holdingsRepository.GetByTickerAsync(ticker, MockUserId);
+        var duplicate = await holdingsRepository.GetByTickerAsync(ticker, MockUserContext.UserId);
 
         if (duplicate is not null && duplicate.Id != ignoredHoldingId)
         {
@@ -335,5 +323,20 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
     private static decimal RoundToThreeDecimals(decimal value)
     {
         return Math.Round(value, 3, MidpointRounding.AwayFromZero);
+    }
+
+    private static DateTime? NormalizeUtc(DateTime? value)
+    {
+        return value is null ? null : NormalizeUtc(value.Value);
+    }
+
+    private static DateTime NormalizeUtc(DateTime value)
+    {
+        return value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Local => value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
+        };
     }
 }

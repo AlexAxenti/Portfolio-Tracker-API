@@ -15,10 +15,4 @@ public interface IHoldingsRepository
     Task UpdateAsync(HoldingEntity holding);
 
     Task DeleteAsync(HoldingEntity holding);
-
-    Task<HoldingEntity?> GetSellSnapshotAsync(Guid tradeId);
-
-    Task StoreSellSnapshotAsync(Guid tradeId, HoldingEntity holding);
-
-    Task DeleteSellSnapshotAsync(Guid tradeId);
 }
