@@ -1,0 +1,339 @@
+using PortfolioTracker.Api.DTOs.Holdings;
+using PortfolioTracker.Api.Entities;
+using PortfolioTracker.Api.Repositories;
+
+namespace PortfolioTracker.Api.Services;
+
+public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IHoldingsService
+{
+    private static readonly Guid MockUserId = Guid.Parse("550e8400-e29b-41d4-a716-446655440000");
+
+    public async Task<IReadOnlyList<HoldingDto>> GetHoldingsAsync()
+    {
+        var holdings = await holdingsRepository.GetAllAsync(MockUserId);
+        return MapHoldings(holdings);
+    }
+
+    public async Task<HoldingDto?> GetHoldingAsync(Guid id)
+    {
+        var holding = await holdingsRepository.GetByIdAsync(id, MockUserId);
+
+        if (holding is null)
+        {
+            return null;
+        }
+
+        var holdings = await holdingsRepository.GetAllAsync(MockUserId);
+        var totalPortfolioValue = CalculateTotalPortfolioValue(holdings);
+        return MapHolding(holding, totalPortfolioValue);
+    }
+
+    public async Task<HoldingDto> CreateHoldingAsync(CreateHoldingRequest request)
+    {
+        ValidateHolding(request.Ticker, request.ShareCount, request.AverageCost);
+
+        var ticker = NormalizeTicker(request.Ticker);
+        await EnsureTickerIsAvailableAsync(ticker);
+
+        var now = DateTime.UtcNow;
+        var holding = new HoldingEntity
+        {
+            Id = Guid.NewGuid(),
+            UserId = MockUserId,
+            Ticker = ticker,
+            CompanyName = CleanOptionalText(request.CompanyName),
+            ShareCount = request.ShareCount,
+            AverageCost = RoundToThreeDecimals(request.AverageCost),
+            CurrentPrice = request.CurrentPrice is null ? null : RoundToThreeDecimals(request.CurrentPrice.Value),
+            PriceLastUpdatedAt = request.PriceLastUpdatedAt,
+            Sector = CleanOptionalText(request.Sector),
+            Categories = NormalizeCategories(request.Categories),
+            Notes = CleanOptionalText(request.Notes),
+            PurchaseDate = request.PurchaseDate,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+
+        await holdingsRepository.AddAsync(holding);
+        var holdings = await holdingsRepository.GetAllAsync(MockUserId);
+        return MapHolding(holding, CalculateTotalPortfolioValue(holdings));
+    }
+
+    public async Task<HoldingDto?> UpdateHoldingAsync(Guid id, UpdateHoldingRequest request)
+    {
+        ValidateHolding(request.Ticker, request.ShareCount, request.AverageCost);
+
+        var holding = await holdingsRepository.GetByIdAsync(id, MockUserId);
+
+        if (holding is null)
+        {
+            return null;
+        }
+
+        var ticker = NormalizeTicker(request.Ticker);
+        await EnsureTickerIsAvailableAsync(ticker, id);
+
+        holding.Ticker = ticker;
+        holding.CompanyName = CleanOptionalText(request.CompanyName);
+        holding.ShareCount = request.ShareCount;
+        holding.AverageCost = RoundToThreeDecimals(request.AverageCost);
+        holding.CurrentPrice = request.CurrentPrice is null ? null : RoundToThreeDecimals(request.CurrentPrice.Value);
+        holding.PriceLastUpdatedAt = request.PriceLastUpdatedAt;
+        holding.Sector = CleanOptionalText(request.Sector);
+        holding.Categories = NormalizeCategories(request.Categories);
+        holding.Notes = CleanOptionalText(request.Notes);
+        holding.PurchaseDate = request.PurchaseDate;
+        holding.UpdatedAt = DateTime.UtcNow;
+
+        await holdingsRepository.UpdateAsync(holding);
+        var holdings = await holdingsRepository.GetAllAsync(MockUserId);
+        return MapHolding(holding, CalculateTotalPortfolioValue(holdings));
+    }
+
+    public async Task<bool> DeleteHoldingAsync(Guid id)
+    {
+        var holding = await holdingsRepository.GetByIdAsync(id, MockUserId);
+
+        if (holding is null)
+        {
+            return false;
+        }
+
+        await holdingsRepository.DeleteAsync(holding);
+        return true;
+    }
+
+    public async Task ApplyTradeAsync(TradeEntity trade)
+    {
+        if (trade.Type == TradeType.Buy)
+        {
+            await ApplyBuyTradeAsync(trade);
+            return;
+        }
+
+        await ApplySellTradeAsync(trade);
+    }
+
+    public async Task ReverseTradeAsync(TradeEntity trade)
+    {
+        if (trade.Type == TradeType.Buy)
+        {
+            await ReverseBuyTradeAsync(trade);
+            return;
+        }
+
+        await ReverseSellTradeAsync(trade);
+    }
+
+    private async Task ApplyBuyTradeAsync(TradeEntity trade)
+    {
+        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, MockUserId);
+        var now = DateTime.UtcNow;
+
+        if (holding is null)
+        {
+            await holdingsRepository.AddAsync(new HoldingEntity
+            {
+                Id = Guid.NewGuid(),
+                UserId = MockUserId,
+                Ticker = trade.Ticker,
+                ShareCount = trade.Quantity,
+                AverageCost = RoundToThreeDecimals(trade.Price),
+                CurrentPrice = RoundToThreeDecimals(trade.Price),
+                PurchaseDate = DateOnly.FromDateTime(trade.TradeDate),
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            return;
+        }
+
+        var totalShares = holding.ShareCount + trade.Quantity;
+        holding.AverageCost = RoundToThreeDecimals(
+            ((holding.ShareCount * holding.AverageCost) + (trade.Quantity * trade.Price)) / totalShares);
+        holding.ShareCount = totalShares;
+        holding.CurrentPrice ??= RoundToThreeDecimals(trade.Price);
+        holding.UpdatedAt = now;
+
+        await holdingsRepository.UpdateAsync(holding);
+    }
+
+    private async Task ApplySellTradeAsync(TradeEntity trade)
+    {
+        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, MockUserId);
+
+        if (holding is null)
+        {
+            throw new InvalidOperationException($"You do not own {trade.Ticker}.");
+        }
+
+        if (trade.Quantity > holding.ShareCount)
+        {
+            throw new InvalidOperationException($"You only own {holding.ShareCount} shares of {trade.Ticker}.");
+        }
+
+        await holdingsRepository.StoreSellSnapshotAsync(trade.Id, holding);
+
+        var remainingShares = holding.ShareCount - trade.Quantity;
+
+        if (remainingShares == 0)
+        {
+            await holdingsRepository.DeleteAsync(holding);
+            return;
+        }
+
+        holding.ShareCount = remainingShares;
+        holding.UpdatedAt = DateTime.UtcNow;
+        await holdingsRepository.UpdateAsync(holding);
+    }
+
+    private async Task ReverseBuyTradeAsync(TradeEntity trade)
+    {
+        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, MockUserId);
+
+        if (holding is null || holding.ShareCount < trade.Quantity)
+        {
+            throw new InvalidOperationException($"Cannot safely reverse the {trade.Ticker} buy trade.");
+        }
+
+        var remainingShares = holding.ShareCount - trade.Quantity;
+
+        if (remainingShares == 0)
+        {
+            await holdingsRepository.DeleteAsync(holding);
+            return;
+        }
+
+        var remainingCost = (holding.ShareCount * holding.AverageCost) - (trade.Quantity * trade.Price);
+
+        if (remainingCost < 0)
+        {
+            throw new InvalidOperationException($"Cannot safely recalculate {trade.Ticker} average cost.");
+        }
+
+        holding.ShareCount = remainingShares;
+        holding.AverageCost = RoundToThreeDecimals(remainingCost / remainingShares);
+        holding.UpdatedAt = DateTime.UtcNow;
+        await holdingsRepository.UpdateAsync(holding);
+    }
+
+    private async Task ReverseSellTradeAsync(TradeEntity trade)
+    {
+        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, MockUserId);
+        var previousHolding = await holdingsRepository.GetSellSnapshotAsync(trade.Id);
+        var now = DateTime.UtcNow;
+
+        if (holding is null)
+        {
+            if (previousHolding is null)
+            {
+                throw new InvalidOperationException($"Cannot safely reverse the {trade.Ticker} sell trade.");
+            }
+
+            previousHolding.UpdatedAt = now;
+            await holdingsRepository.AddAsync(previousHolding);
+            return;
+        }
+
+        holding.ShareCount += trade.Quantity;
+        holding.AverageCost = RoundToThreeDecimals(previousHolding?.AverageCost ?? holding.AverageCost);
+        holding.UpdatedAt = now;
+        await holdingsRepository.UpdateAsync(holding);
+    }
+
+    private async Task EnsureTickerIsAvailableAsync(string ticker, Guid? ignoredHoldingId = null)
+    {
+        var duplicate = await holdingsRepository.GetByTickerAsync(ticker, MockUserId);
+
+        if (duplicate is not null && duplicate.Id != ignoredHoldingId)
+        {
+            throw new InvalidOperationException($"You already own {ticker}.");
+        }
+    }
+
+    private static IReadOnlyList<HoldingDto> MapHoldings(IReadOnlyList<HoldingEntity> holdings)
+    {
+        var totalPortfolioValue = CalculateTotalPortfolioValue(holdings);
+        return holdings.Select(holding => MapHolding(holding, totalPortfolioValue)).ToList();
+    }
+
+    private static HoldingDto MapHolding(HoldingEntity holding, decimal totalPortfolioValue)
+    {
+        var effectiveCurrentPrice = holding.CurrentPrice ?? holding.AverageCost;
+        var totalCostInvested = holding.ShareCount * holding.AverageCost;
+        var marketValue = holding.ShareCount * effectiveCurrentPrice;
+        var unrealizedPL = marketValue - totalCostInvested;
+        var unrealizedPLPercent = totalCostInvested == 0 ? 0 : (unrealizedPL / totalCostInvested) * 100;
+        var allocationPercent = totalPortfolioValue == 0 ? 0 : (marketValue / totalPortfolioValue) * 100;
+
+        return new HoldingDto(
+            holding.Id,
+            holding.UserId,
+            holding.Ticker,
+            holding.CompanyName,
+            holding.ShareCount,
+            holding.AverageCost,
+            holding.CurrentPrice,
+            holding.PriceLastUpdatedAt,
+            holding.Sector,
+            holding.Categories,
+            holding.Notes,
+            holding.PurchaseDate,
+            holding.CreatedAt,
+            holding.UpdatedAt,
+            effectiveCurrentPrice,
+            totalCostInvested,
+            marketValue,
+            unrealizedPL,
+            unrealizedPLPercent,
+            allocationPercent);
+    }
+
+    private static decimal CalculateTotalPortfolioValue(IEnumerable<HoldingEntity> holdings)
+    {
+        return holdings.Sum(holding => holding.ShareCount * (holding.CurrentPrice ?? holding.AverageCost));
+    }
+
+    private static void ValidateHolding(string ticker, decimal shareCount, decimal averageCost)
+    {
+        if (string.IsNullOrWhiteSpace(ticker))
+        {
+            throw new InvalidOperationException("Ticker is required.");
+        }
+
+        if (shareCount <= 0)
+        {
+            throw new InvalidOperationException("Share count must be greater than zero.");
+        }
+
+        if (averageCost <= 0)
+        {
+            throw new InvalidOperationException("Average cost must be greater than zero.");
+        }
+    }
+
+    private static string NormalizeTicker(string ticker)
+    {
+        return ticker.Trim().ToUpperInvariant();
+    }
+
+    private static string? CleanOptionalText(string? value)
+    {
+        var trimmedValue = value?.Trim();
+        return string.IsNullOrWhiteSpace(trimmedValue) ? null : trimmedValue;
+    }
+
+    private static List<string> NormalizeCategories(List<string>? categories)
+    {
+        return categories?
+            .Select(CleanOptionalText)
+            .Where(category => category is not null)
+            .Select(category => category!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
+    }
+
+    private static decimal RoundToThreeDecimals(decimal value)
+    {
+        return Math.Round(value, 3, MidpointRounding.AwayFromZero);
+    }
+}

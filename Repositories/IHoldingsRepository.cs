@@ -1,0 +1,24 @@
+using PortfolioTracker.Api.Entities;
+
+namespace PortfolioTracker.Api.Repositories;
+
+public interface IHoldingsRepository
+{
+    Task<IReadOnlyList<HoldingEntity>> GetAllAsync(Guid userId);
+
+    Task<HoldingEntity?> GetByIdAsync(Guid id, Guid userId);
+
+    Task<HoldingEntity?> GetByTickerAsync(string ticker, Guid userId);
+
+    Task AddAsync(HoldingEntity holding);
+
+    Task UpdateAsync(HoldingEntity holding);
+
+    Task DeleteAsync(HoldingEntity holding);
+
+    Task<HoldingEntity?> GetSellSnapshotAsync(Guid tradeId);
+
+    Task StoreSellSnapshotAsync(Guid tradeId, HoldingEntity holding);
+
+    Task DeleteSellSnapshotAsync(Guid tradeId);
+}
