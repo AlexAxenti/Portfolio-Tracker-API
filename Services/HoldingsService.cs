@@ -5,24 +5,26 @@ using PortfolioTracker.Api.Repositories;
 
 namespace PortfolioTracker.Api.Services;
 
-public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IHoldingsService
+public sealed class HoldingsService(
+    IHoldingsRepository holdingsRepository,
+    ICurrentUserService currentUserService) : IHoldingsService
 {
     public async Task<IReadOnlyList<HoldingDto>> GetHoldingsAsync()
     {
-        var holdings = await holdingsRepository.GetAllAsync(MockUserContext.UserId);
+        var holdings = await holdingsRepository.GetAllAsync(currentUserService.UserId);
         return MapHoldings(holdings);
     }
 
     public async Task<HoldingDto?> GetHoldingAsync(Guid id)
     {
-        var holding = await holdingsRepository.GetByIdAsync(id, MockUserContext.UserId);
+        var holding = await holdingsRepository.GetByIdAsync(id, currentUserService.UserId);
 
         if (holding is null)
         {
             return null;
         }
 
-        var holdings = await holdingsRepository.GetAllAsync(MockUserContext.UserId);
+        var holdings = await holdingsRepository.GetAllAsync(currentUserService.UserId);
         var totalPortfolioValue = CalculateTotalPortfolioValue(holdings);
         return MapHolding(holding, totalPortfolioValue);
     }
@@ -38,7 +40,7 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
         var holding = new HoldingEntity
         {
             Id = Guid.NewGuid(),
-            UserId = MockUserContext.UserId,
+            UserId = currentUserService.UserId,
             Ticker = ticker,
             CompanyName = CleanOptionalText(request.CompanyName),
             ShareCount = request.ShareCount,
@@ -54,7 +56,7 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
         };
 
         await holdingsRepository.AddAsync(holding);
-        var holdings = await holdingsRepository.GetAllAsync(MockUserContext.UserId);
+        var holdings = await holdingsRepository.GetAllAsync(currentUserService.UserId);
         return MapHolding(holding, CalculateTotalPortfolioValue(holdings));
     }
 
@@ -62,7 +64,7 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
     {
         ValidateHolding(request.Ticker, request.ShareCount, request.AverageCost);
 
-        var holding = await holdingsRepository.GetByIdAsync(id, MockUserContext.UserId);
+        var holding = await holdingsRepository.GetByIdAsync(id, currentUserService.UserId);
 
         if (holding is null)
         {
@@ -85,13 +87,13 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
         holding.UpdatedAt = DateTime.UtcNow;
 
         await holdingsRepository.UpdateAsync(holding);
-        var holdings = await holdingsRepository.GetAllAsync(MockUserContext.UserId);
+        var holdings = await holdingsRepository.GetAllAsync(currentUserService.UserId);
         return MapHolding(holding, CalculateTotalPortfolioValue(holdings));
     }
 
     public async Task<bool> DeleteHoldingAsync(Guid id)
     {
-        var holding = await holdingsRepository.GetByIdAsync(id, MockUserContext.UserId);
+        var holding = await holdingsRepository.GetByIdAsync(id, currentUserService.UserId);
 
         if (holding is null)
         {
@@ -126,7 +128,7 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
 
     private async Task ApplyBuyTradeAsync(TradeEntity trade)
     {
-        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, MockUserContext.UserId);
+        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, currentUserService.UserId);
         var now = DateTime.UtcNow;
 
         if (holding is null)
@@ -134,7 +136,7 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
             await holdingsRepository.AddAsync(new HoldingEntity
             {
                 Id = Guid.NewGuid(),
-                UserId = MockUserContext.UserId,
+                UserId = currentUserService.UserId,
                 Ticker = trade.Ticker,
                 ShareCount = trade.Quantity,
                 AverageCost = RoundToThreeDecimals(trade.Price),
@@ -158,7 +160,7 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
 
     private async Task ApplySellTradeAsync(TradeEntity trade)
     {
-        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, MockUserContext.UserId);
+        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, currentUserService.UserId);
 
         if (holding is null)
         {
@@ -185,7 +187,7 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
 
     private async Task ReverseBuyTradeAsync(TradeEntity trade)
     {
-        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, MockUserContext.UserId);
+        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, currentUserService.UserId);
 
         if (holding is null || holding.ShareCount < trade.Quantity)
         {
@@ -215,7 +217,7 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
 
     private async Task ReverseSellTradeAsync(TradeEntity trade)
     {
-        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, MockUserContext.UserId);
+        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, currentUserService.UserId);
         var now = DateTime.UtcNow;
 
         if (holding is null)
@@ -230,7 +232,7 @@ public sealed class HoldingsService(IHoldingsRepository holdingsRepository) : IH
 
     private async Task EnsureTickerIsAvailableAsync(string ticker, Guid? ignoredHoldingId = null)
     {
-        var duplicate = await holdingsRepository.GetByTickerAsync(ticker, MockUserContext.UserId);
+        var duplicate = await holdingsRepository.GetByTickerAsync(ticker, currentUserService.UserId);
 
         if (duplicate is not null && duplicate.Id != ignoredHoldingId)
         {

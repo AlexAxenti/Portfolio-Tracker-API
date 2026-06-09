@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PortfolioTracker.Api.DTOs.Trades;
 using PortfolioTracker.Api.Services;
@@ -5,6 +6,7 @@ using PortfolioTracker.Api.Services;
 namespace PortfolioTracker.Api.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/[controller]")]
 public sealed class TradesController(ITradesService tradesService) : ControllerBase
 {

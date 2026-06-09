@@ -7,11 +7,12 @@ namespace PortfolioTracker.Api.Services;
 
 public sealed class TradesService(
     ITradesRepository tradesRepository,
-    IHoldingsService holdingsService) : ITradesService
+    IHoldingsService holdingsService,
+    ICurrentUserService currentUserService) : ITradesService
 {
     public async Task<IReadOnlyList<TradeDto>> GetTradesAsync()
     {
-        var trades = await tradesRepository.GetAllAsync(MockUserContext.UserId);
+        var trades = await tradesRepository.GetAllAsync(currentUserService.UserId);
         return trades.Select(MapTrade).ToList();
     }
 
@@ -22,7 +23,7 @@ public sealed class TradesService(
         var trade = new TradeEntity
         {
             Id = Guid.NewGuid(),
-            UserId = MockUserContext.UserId,
+            UserId = currentUserService.UserId,
             Ticker = NormalizeTicker(request.Ticker),
             Type = request.Type,
             Quantity = request.Quantity,
@@ -42,7 +43,7 @@ public sealed class TradesService(
     {
         ValidateTrade(request.Ticker, request.Type, request.Quantity, request.Price);
 
-        var existingTrade = await tradesRepository.GetByIdAsync(id, MockUserContext.UserId);
+        var existingTrade = await tradesRepository.GetByIdAsync(id, currentUserService.UserId);
 
         if (existingTrade is null)
         {
@@ -87,7 +88,7 @@ public sealed class TradesService(
 
     public async Task<bool> DeleteTradeAsync(Guid id)
     {
-        var existingTrade = await tradesRepository.GetByIdAsync(id, MockUserContext.UserId);
+        var existingTrade = await tradesRepository.GetByIdAsync(id, currentUserService.UserId);
 
         if (existingTrade is null)
         {
