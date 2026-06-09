@@ -11,6 +11,8 @@ public interface IHoldingsService
 
     Task<HoldingDto> CreateHoldingAsync(CreateHoldingRequest request);
 
+    Task<IReadOnlyList<HoldingDto>> RefreshPricesAsync();
+
     Task<HoldingDto?> UpdateHoldingAsync(Guid id, UpdateHoldingRequest request);
 
     Task<bool> DeleteHoldingAsync(Guid id);

@@ -66,6 +66,7 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString));
+builder.Services.AddHttpClient();
 builder.Services.AddScoped<IHoldingsRepository, HoldingsRepository>();
 builder.Services.AddScoped<ITradesRepository, TradesRepository>();
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();

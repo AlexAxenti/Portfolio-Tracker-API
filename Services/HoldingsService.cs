@@ -1,3 +1,5 @@
+using System.Net.Http.Json;
+using System.Text.Json.Serialization;
 using PortfolioTracker.Api.Auth;
 using PortfolioTracker.Api.DTOs.Holdings;
 using PortfolioTracker.Api.Entities;
@@ -7,7 +9,9 @@ namespace PortfolioTracker.Api.Services;
 
 public sealed class HoldingsService(
     IHoldingsRepository holdingsRepository,
-    ICurrentUserService currentUserService) : IHoldingsService
+    ICurrentUserService currentUserService,
+    IHttpClientFactory httpClientFactory,
+    IConfiguration configuration) : IHoldingsService
 {
     public async Task<IReadOnlyList<HoldingDto>> GetHoldingsAsync()
     {
@@ -58,6 +62,52 @@ public sealed class HoldingsService(
         await holdingsRepository.AddAsync(holding);
         var holdings = await holdingsRepository.GetAllAsync(currentUserService.UserId);
         return MapHolding(holding, CalculateTotalPortfolioValue(holdings));
+    }
+
+    public async Task<IReadOnlyList<HoldingDto>> RefreshPricesAsync()
+    {
+        var apiKey = configuration["Finnhub:ApiKey"]
+            ?? throw new InvalidOperationException("Finnhub API key is not configured.");
+
+        var holdings = await holdingsRepository.GetAllForUpdateAsync(currentUserService.UserId);
+        var tickers = holdings
+            .Select(holding => holding.Ticker)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var pricesByTicker = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var ticker in tickers)
+        {
+            var currentPrice = await GetCurrentPriceAsync(ticker, apiKey);
+
+            if (currentPrice is > 0)
+            {
+                pricesByTicker[ticker] = RoundToThreeDecimals(currentPrice.Value);
+            }
+        }
+
+        if (pricesByTicker.Count == 0)
+        {
+            return MapHoldings(holdings);
+        }
+
+        var now = DateTime.UtcNow;
+
+        foreach (var holding in holdings)
+        {
+            if (!pricesByTicker.TryGetValue(holding.Ticker, out var currentPrice))
+            {
+                continue;
+            }
+
+            holding.CurrentPrice = currentPrice;
+            holding.PriceLastUpdatedAt = now;
+            holding.UpdatedAt = now;
+        }
+
+        await holdingsRepository.SaveChangesAsync();
+        return MapHoldings(holdings);
     }
 
     public async Task<HoldingDto?> UpdateHoldingAsync(Guid id, UpdateHoldingRequest request)
@@ -124,6 +174,16 @@ public sealed class HoldingsService(
         }
 
         await ReverseSellTradeAsync(trade);
+    }
+
+    private async Task<decimal?> GetCurrentPriceAsync(string ticker, string apiKey)
+    {
+        var httpClient = httpClientFactory.CreateClient();
+        var requestUrl =
+            $"https://finnhub.io/api/v1/quote?symbol={Uri.EscapeDataString(ticker)}&token={Uri.EscapeDataString(apiKey)}";
+        var quote = await httpClient.GetFromJsonAsync<FinnhubQuoteResponse>(requestUrl);
+
+        return quote?.CurrentPrice;
     }
 
     private async Task ApplyBuyTradeAsync(TradeEntity trade)
@@ -326,6 +386,9 @@ public sealed class HoldingsService(
     {
         return Math.Round(value, 3, MidpointRounding.AwayFromZero);
     }
+
+    private sealed record FinnhubQuoteResponse(
+        [property: JsonPropertyName("c")] decimal? CurrentPrice);
 
     private static DateTime? NormalizeUtc(DateTime? value)
     {

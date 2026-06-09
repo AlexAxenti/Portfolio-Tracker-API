@@ -15,6 +15,14 @@ public sealed class HoldingsRepository(AppDbContext dbContext) : IHoldingsReposi
             .ToListAsync();
     }
 
+    public async Task<IReadOnlyList<HoldingEntity>> GetAllForUpdateAsync(Guid userId)
+    {
+        return await dbContext.Holdings
+            .Where(holding => holding.UserId == userId)
+            .OrderBy(holding => holding.Ticker)
+            .ToListAsync();
+    }
+
     public async Task<HoldingEntity?> GetByIdAsync(Guid id, Guid userId)
     {
         return await dbContext.Holdings
@@ -38,6 +46,11 @@ public sealed class HoldingsRepository(AppDbContext dbContext) : IHoldingsReposi
     public async Task UpdateAsync(HoldingEntity holding)
     {
         dbContext.Holdings.Update(holding);
+        await dbContext.SaveChangesAsync();
+    }
+
+    public async Task SaveChangesAsync()
+    {
         await dbContext.SaveChangesAsync();
     }
 
