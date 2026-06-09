@@ -26,7 +26,10 @@ builder.Services.AddCors(options =>
     options.AddPolicy(AngularCorsPolicy, policy =>
     {
         policy
-            .WithOrigins("http://localhost:4200")
+            .WithOrigins(
+                "http://localhost:4200",
+                "https://portfolio-tracker-ui-k3rz.onrender.com"
+            )
             .AllowAnyHeader()
             .AllowAnyMethod();
     });

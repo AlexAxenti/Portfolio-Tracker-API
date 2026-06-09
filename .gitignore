@@ -30,6 +30,7 @@ msbuild.log
 msbuild.err
 msbuild.wrn
 ADENTS.md
+publish/
 
 # Visual Studio 2015
 .vs/
