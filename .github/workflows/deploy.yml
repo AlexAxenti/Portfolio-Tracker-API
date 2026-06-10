@@ -1,0 +1,54 @@
+name: Build and Deploy Portfolio API
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/alexaxenti/portfolio-tracker-api
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract tag
+        id: vars
+        run: echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Build and push image
+        run: |
+          docker build \
+            -t $IMAGE_NAME:${{ steps.vars.outputs.TAG }} \
+            -t $IMAGE_NAME:latest \
+            .
+
+          docker push $IMAGE_NAME:${{ steps.vars.outputs.TAG }}
+          docker push $IMAGE_NAME:latest
+
+      - name: Deploy on VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd ~/production
+            docker compose pull portfolio-tracker-api
+            docker compose up -d portfolio-tracker-api
+            docker image prune -f
