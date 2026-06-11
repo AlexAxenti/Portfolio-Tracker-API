@@ -1,4 +1,5 @@
 using PortfolioTracker.Api.Auth;
+using PortfolioTracker.Api.Common;
 using PortfolioTracker.Api.DTOs.Trades;
 using PortfolioTracker.Api.Entities;
 using PortfolioTracker.Api.Repositories;
@@ -27,7 +28,7 @@ public sealed class TradesService(
             Ticker = NormalizeTicker(request.Ticker),
             Type = request.Type,
             Quantity = request.Quantity,
-            Price = RoundToThreeDecimals(request.Price),
+            Price = DecimalHelpers.RoundToThreeDecimals(request.Price),
             TradeDate = NormalizeUtc(request.TradeDate),
             Notes = CleanOptionalText(request.Notes),
             CreatedAt = DateTime.UtcNow
@@ -57,7 +58,7 @@ public sealed class TradesService(
             Ticker = NormalizeTicker(request.Ticker),
             Type = request.Type,
             Quantity = request.Quantity,
-            Price = RoundToThreeDecimals(request.Price),
+            Price = DecimalHelpers.RoundToThreeDecimals(request.Price),
             TradeDate = NormalizeUtc(request.TradeDate),
             Notes = CleanOptionalText(request.Notes),
             CreatedAt = existingTrade.CreatedAt
@@ -146,11 +147,6 @@ public sealed class TradesService(
     {
         var trimmedValue = value?.Trim();
         return string.IsNullOrWhiteSpace(trimmedValue) ? null : trimmedValue;
-    }
-
-    private static decimal RoundToThreeDecimals(decimal value)
-    {
-        return Math.Round(value, 3, MidpointRounding.AwayFromZero);
     }
 
     private static DateTime NormalizeUtc(DateTime value)

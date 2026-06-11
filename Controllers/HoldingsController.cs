@@ -38,13 +38,6 @@ public sealed class HoldingsController(IHoldingsService holdingsService) : Contr
         }
     }
 
-    [HttpPost("refresh-prices")]
-    public async Task<ActionResult<IReadOnlyList<HoldingDto>>> RefreshPrices()
-    {
-        var holdings = await holdingsService.RefreshPricesAsync();
-        return Ok(holdings);
-    }
-
     [HttpPut("{id:guid}")]
     public async Task<ActionResult<HoldingDto>> UpdateHolding(Guid id, UpdateHoldingRequest request)
     {

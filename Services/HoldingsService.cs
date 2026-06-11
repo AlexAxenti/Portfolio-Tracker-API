@@ -1,6 +1,5 @@
-using System.Net.Http.Json;
-using System.Text.Json.Serialization;
 using PortfolioTracker.Api.Auth;
+using PortfolioTracker.Api.Common;
 using PortfolioTracker.Api.DTOs.Holdings;
 using PortfolioTracker.Api.Entities;
 using PortfolioTracker.Api.Repositories;
@@ -9,14 +8,12 @@ namespace PortfolioTracker.Api.Services;
 
 public sealed class HoldingsService(
     IHoldingsRepository holdingsRepository,
-    ICurrentUserService currentUserService,
-    IHttpClientFactory httpClientFactory,
-    IConfiguration configuration) : IHoldingsService
+    ICurrentUserService currentUserService) : IHoldingsService
 {
     public async Task<IReadOnlyList<HoldingDto>> GetHoldingsAsync()
     {
         var holdings = await holdingsRepository.GetAllAsync(currentUserService.UserId);
-        return MapHoldings(holdings);
+        return HoldingMapper.MapHoldings(holdings);
     }
 
     public async Task<HoldingDto?> GetHoldingAsync(Guid id)
@@ -29,8 +26,8 @@ public sealed class HoldingsService(
         }
 
         var holdings = await holdingsRepository.GetAllAsync(currentUserService.UserId);
-        var totalPortfolioValue = CalculateTotalPortfolioValue(holdings);
-        return MapHolding(holding, totalPortfolioValue);
+        var totalPortfolioValue = HoldingMapper.CalculateTotalPortfolioValue(holdings);
+        return HoldingMapper.MapHolding(holding, totalPortfolioValue);
     }
 
     public async Task<HoldingDto> CreateHoldingAsync(CreateHoldingRequest request)
@@ -48,8 +45,8 @@ public sealed class HoldingsService(
             Ticker = ticker,
             CompanyName = CleanOptionalText(request.CompanyName),
             ShareCount = request.ShareCount,
-            AverageCost = RoundToThreeDecimals(request.AverageCost),
-            CurrentPrice = request.CurrentPrice is null ? null : RoundToThreeDecimals(request.CurrentPrice.Value),
+            AverageCost = DecimalHelpers.RoundToThreeDecimals(request.AverageCost),
+            CurrentPrice = request.CurrentPrice is null ? null : DecimalHelpers.RoundToThreeDecimals(request.CurrentPrice.Value),
             PriceLastUpdatedAt = NormalizeUtc(request.PriceLastUpdatedAt),
             Sector = CleanOptionalText(request.Sector),
             Categories = NormalizeCategories(request.Categories),
@@ -61,53 +58,7 @@ public sealed class HoldingsService(
 
         await holdingsRepository.AddAsync(holding);
         var holdings = await holdingsRepository.GetAllAsync(currentUserService.UserId);
-        return MapHolding(holding, CalculateTotalPortfolioValue(holdings));
-    }
-
-    public async Task<IReadOnlyList<HoldingDto>> RefreshPricesAsync()
-    {
-        var apiKey = configuration["Finnhub:ApiKey"]
-            ?? throw new InvalidOperationException("Finnhub API key is not configured.");
-
-        var holdings = await holdingsRepository.GetAllForUpdateAsync(currentUserService.UserId);
-        var tickers = holdings
-            .Select(holding => holding.Ticker)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        var pricesByTicker = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var ticker in tickers)
-        {
-            var currentPrice = await GetCurrentPriceAsync(ticker, apiKey);
-
-            if (currentPrice is > 0)
-            {
-                pricesByTicker[ticker] = RoundToThreeDecimals(currentPrice.Value);
-            }
-        }
-
-        if (pricesByTicker.Count == 0)
-        {
-            return MapHoldings(holdings);
-        }
-
-        var now = DateTime.UtcNow;
-
-        foreach (var holding in holdings)
-        {
-            if (!pricesByTicker.TryGetValue(holding.Ticker, out var currentPrice))
-            {
-                continue;
-            }
-
-            holding.CurrentPrice = currentPrice;
-            holding.PriceLastUpdatedAt = now;
-            holding.UpdatedAt = now;
-        }
-
-        await holdingsRepository.SaveChangesAsync();
-        return MapHoldings(holdings);
+        return HoldingMapper.MapHolding(holding, HoldingMapper.CalculateTotalPortfolioValue(holdings));
     }
 
     public async Task<HoldingDto?> UpdateHoldingAsync(Guid id, UpdateHoldingRequest request)
@@ -127,8 +78,8 @@ public sealed class HoldingsService(
         holding.Ticker = ticker;
         holding.CompanyName = CleanOptionalText(request.CompanyName);
         holding.ShareCount = request.ShareCount;
-        holding.AverageCost = RoundToThreeDecimals(request.AverageCost);
-        holding.CurrentPrice = request.CurrentPrice is null ? null : RoundToThreeDecimals(request.CurrentPrice.Value);
+        holding.AverageCost = DecimalHelpers.RoundToThreeDecimals(request.AverageCost);
+        holding.CurrentPrice = request.CurrentPrice is null ? null : DecimalHelpers.RoundToThreeDecimals(request.CurrentPrice.Value);
         holding.PriceLastUpdatedAt = NormalizeUtc(request.PriceLastUpdatedAt);
         holding.Sector = CleanOptionalText(request.Sector);
         holding.Categories = NormalizeCategories(request.Categories);
@@ -138,7 +89,7 @@ public sealed class HoldingsService(
 
         await holdingsRepository.UpdateAsync(holding);
         var holdings = await holdingsRepository.GetAllAsync(currentUserService.UserId);
-        return MapHolding(holding, CalculateTotalPortfolioValue(holdings));
+        return HoldingMapper.MapHolding(holding, HoldingMapper.CalculateTotalPortfolioValue(holdings));
     }
 
     public async Task<bool> DeleteHoldingAsync(Guid id)
@@ -176,16 +127,6 @@ public sealed class HoldingsService(
         await ReverseSellTradeAsync(trade);
     }
 
-    private async Task<decimal?> GetCurrentPriceAsync(string ticker, string apiKey)
-    {
-        var httpClient = httpClientFactory.CreateClient();
-        var requestUrl =
-            $"https://finnhub.io/api/v1/quote?symbol={Uri.EscapeDataString(ticker)}&token={Uri.EscapeDataString(apiKey)}";
-        var quote = await httpClient.GetFromJsonAsync<FinnhubQuoteResponse>(requestUrl);
-
-        return quote?.CurrentPrice;
-    }
-
     private async Task ApplyBuyTradeAsync(TradeEntity trade)
     {
         var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, currentUserService.UserId);
@@ -199,8 +140,8 @@ public sealed class HoldingsService(
                 UserId = currentUserService.UserId,
                 Ticker = trade.Ticker,
                 ShareCount = trade.Quantity,
-                AverageCost = RoundToThreeDecimals(trade.Price),
-                CurrentPrice = RoundToThreeDecimals(trade.Price),
+                AverageCost = DecimalHelpers.RoundToThreeDecimals(trade.Price),
+                CurrentPrice = DecimalHelpers.RoundToThreeDecimals(trade.Price),
                 PurchaseDate = DateOnly.FromDateTime(trade.TradeDate),
                 CreatedAt = now,
                 UpdatedAt = now
@@ -209,10 +150,10 @@ public sealed class HoldingsService(
         }
 
         var totalShares = holding.ShareCount + trade.Quantity;
-        holding.AverageCost = RoundToThreeDecimals(
+        holding.AverageCost = DecimalHelpers.RoundToThreeDecimals(
             ((holding.ShareCount * holding.AverageCost) + (trade.Quantity * trade.Price)) / totalShares);
         holding.ShareCount = totalShares;
-        holding.CurrentPrice ??= RoundToThreeDecimals(trade.Price);
+        holding.CurrentPrice ??= DecimalHelpers.RoundToThreeDecimals(trade.Price);
         holding.UpdatedAt = now;
 
         await holdingsRepository.UpdateAsync(holding);
@@ -270,7 +211,7 @@ public sealed class HoldingsService(
         }
 
         holding.ShareCount = remainingShares;
-        holding.AverageCost = RoundToThreeDecimals(remainingCost / remainingShares);
+        holding.AverageCost = DecimalHelpers.RoundToThreeDecimals(remainingCost / remainingShares);
         holding.UpdatedAt = DateTime.UtcNow;
         await holdingsRepository.UpdateAsync(holding);
     }
@@ -298,49 +239,6 @@ public sealed class HoldingsService(
         {
             throw new InvalidOperationException($"You already own {ticker}.");
         }
-    }
-
-    private static IReadOnlyList<HoldingDto> MapHoldings(IReadOnlyList<HoldingEntity> holdings)
-    {
-        var totalPortfolioValue = CalculateTotalPortfolioValue(holdings);
-        return holdings.Select(holding => MapHolding(holding, totalPortfolioValue)).ToList();
-    }
-
-    private static HoldingDto MapHolding(HoldingEntity holding, decimal totalPortfolioValue)
-    {
-        var effectiveCurrentPrice = holding.CurrentPrice ?? holding.AverageCost;
-        var totalCostInvested = holding.ShareCount * holding.AverageCost;
-        var marketValue = holding.ShareCount * effectiveCurrentPrice;
-        var unrealizedPL = marketValue - totalCostInvested;
-        var unrealizedPLPercent = totalCostInvested == 0 ? 0 : (unrealizedPL / totalCostInvested) * 100;
-        var allocationPercent = totalPortfolioValue == 0 ? 0 : (marketValue / totalPortfolioValue) * 100;
-
-        return new HoldingDto(
-            holding.Id,
-            holding.UserId,
-            holding.Ticker,
-            holding.CompanyName,
-            holding.ShareCount,
-            holding.AverageCost,
-            holding.CurrentPrice,
-            holding.PriceLastUpdatedAt,
-            holding.Sector,
-            holding.Categories,
-            holding.Notes,
-            holding.PurchaseDate,
-            holding.CreatedAt,
-            holding.UpdatedAt,
-            effectiveCurrentPrice,
-            totalCostInvested,
-            marketValue,
-            unrealizedPL,
-            unrealizedPLPercent,
-            allocationPercent);
-    }
-
-    private static decimal CalculateTotalPortfolioValue(IEnumerable<HoldingEntity> holdings)
-    {
-        return holdings.Sum(holding => holding.ShareCount * (holding.CurrentPrice ?? holding.AverageCost));
     }
 
     private static void ValidateHolding(string ticker, decimal shareCount, decimal averageCost)
@@ -381,14 +279,6 @@ public sealed class HoldingsService(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList() ?? [];
     }
-
-    private static decimal RoundToThreeDecimals(decimal value)
-    {
-        return Math.Round(value, 3, MidpointRounding.AwayFromZero);
-    }
-
-    private sealed record FinnhubQuoteResponse(
-        [property: JsonPropertyName("c")] decimal? CurrentPrice);
 
     private static DateTime? NormalizeUtc(DateTime? value)
     {
