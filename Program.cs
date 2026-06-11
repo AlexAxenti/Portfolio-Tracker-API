@@ -90,7 +90,7 @@ builder.Services.AddScoped<IHoldingsRepository, HoldingsRepository>();
 builder.Services.AddScoped<ITradesRepository, TradesRepository>();
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 builder.Services.AddScoped<IHoldingsService, HoldingsService>();
-builder.Services.AddScoped<IPricesService, PricesService>();
+builder.Services.AddSingleton<IPricesService, PricesService>();
 builder.Services.AddScoped<ITradesService, TradesService>();
 
 var app = builder.Build();
