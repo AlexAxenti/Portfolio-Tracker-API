@@ -1,1 +1,0 @@
-Avoid running build or tests or anything after done tasks just scan for correctness and ill manually test after.

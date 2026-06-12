@@ -1,10 +1,11 @@
-bin/
-obj/
+**/bin/
+**/obj/
+**/publish/
 .git/
 .github/
+.vs/
 .vscode/
 *.user
 *.suo
 .env
 appsettings.Development.json
-publish/
