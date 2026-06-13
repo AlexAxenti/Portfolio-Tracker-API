@@ -7,13 +7,16 @@ using PortfolioTracker.Api.Common;
 using PortfolioTracker.Api.DTOs.Holdings;
 using PortfolioTracker.Api.Entities;
 using PortfolioTracker.Api.Repositories;
+using PortfolioTracker.Api.Services.Messaging;
+using PortfolioTracker.Api.DTOs.Messaging;
 
 namespace PortfolioTracker.Api.Services;
 
 public sealed class PricesService(
     IHttpClientFactory httpClientFactory,
     IConfiguration configuration,
-    IServiceScopeFactory serviceScopeFactory) : IPricesService, IDisposable
+    IServiceScopeFactory serviceScopeFactory,
+    IMessagePublisher messagePublisher) : IPricesService, IDisposable
 {
     private static readonly TimeSpan PriceRefreshTtl = TimeSpan.FromMinutes(15);
 
@@ -93,6 +96,11 @@ public sealed class PricesService(
         {
             await tickersRepository.SaveChangesAsync();
         }
+
+        await messagePublisher.PublishPriceRefreshRequestedAsync(new PriceRefreshRequestedMessage(
+            UserId: currentUserService.UserId,
+            Tickers: staleTickers.Select(t => new PriceRefreshTickerMessage(t.Id, t.Symbol)).ToList(),
+            RequestedAtUtc: now));
 
         return HoldingMapper.MapHoldings(holdings);
     }

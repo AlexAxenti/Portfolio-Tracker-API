@@ -9,6 +9,9 @@ using PortfolioTracker.Api.Auth;
 using PortfolioTracker.Api.Data;
 using PortfolioTracker.Api.Repositories;
 using PortfolioTracker.Api.Services;
+using PortfolioTracker.Api.Services.Messaging;
+using PortfolioTracker.Api.Workers;
+using PortfolioTracker.Api.Configuration;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -83,6 +86,9 @@ builder.Services.AddAuthorization();
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' is not configured.");
 
+builder.Services.Configure<RabbitMqOptions>(
+builder.Configuration.GetSection("RabbitMQ"));
+
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString));
 builder.Services.AddHttpClient();
@@ -93,8 +99,11 @@ builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
 builder.Services.AddScoped<ITickersService, TickersService>();
 builder.Services.AddScoped<IHoldingsService, HoldingsService>();
 builder.Services.AddScoped<IHoldingsTradeService, HoldingsTradeService>();
+builder.Services.AddSingleton<IMessagePublisher, RabbitMqMessagePublisher>();
 builder.Services.AddSingleton<IPricesService, PricesService>();
 builder.Services.AddScoped<ITradesService, TradesService>();
+
+builder.Services.AddHostedService<PriceRefreshWorker>();
 
 var app = builder.Build();
 
