@@ -32,10 +32,17 @@ public sealed class RabbitMqMessagePublisher(IOptions<RabbitMqOptions> options) 
 
         var json = System.Text.Json.JsonSerializer.Serialize(message);
         var body = Encoding.UTF8.GetBytes(json);
+        var properties = new BasicProperties
+        {
+            ContentType = "application/json",
+            Persistent = true
+        };
 
         await channel.BasicPublishAsync(
             exchange: string.Empty,
             routingKey: rabbitMqOptions.PriceRefreshQueueName,
+            mandatory: false,
+            basicProperties: properties,
             body: body,
             cancellationToken: cancellationToken);
 

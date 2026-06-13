@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using PortfolioTracker.Api.DTOs.Holdings;
+using PortfolioTracker.Api.DTOs.Prices;
 using PortfolioTracker.Api.Services;
 
 namespace PortfolioTracker.Api.Controllers;
@@ -11,9 +11,9 @@ namespace PortfolioTracker.Api.Controllers;
 public sealed class PricesController(IPricesService pricesService) : ControllerBase
 {
     [HttpPost("refresh-prices")]
-    public async Task<ActionResult<IReadOnlyList<HoldingDto>>> RefreshPrices()
+    public async Task<ActionResult<PriceRefreshQueuedResponse>> RefreshPrices()
     {
-        var holdings = await pricesService.RefreshPricesAsync();
-        return Ok(holdings);
+        var response = await pricesService.RefreshPricesAsync();
+        return Accepted(response);
     }
 }
