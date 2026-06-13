@@ -10,6 +10,7 @@ public sealed class TradesRepository(AppDbContext dbContext) : ITradesRepository
     {
         return await dbContext.Trades
             .AsNoTracking()
+            .Include(trade => trade.Ticker)
             .Where(trade => trade.UserId == userId)
             .OrderByDescending(trade => trade.TradeDate)
             .ThenByDescending(trade => trade.CreatedAt)
@@ -20,6 +21,7 @@ public sealed class TradesRepository(AppDbContext dbContext) : ITradesRepository
     {
         return await dbContext.Trades
             .AsNoTracking()
+            .Include(trade => trade.Ticker)
             .FirstOrDefaultAsync(trade => trade.Id == id && trade.UserId == userId);
     }
 

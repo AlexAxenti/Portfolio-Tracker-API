@@ -88,8 +88,11 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddHttpClient();
 builder.Services.AddScoped<IHoldingsRepository, HoldingsRepository>();
 builder.Services.AddScoped<ITradesRepository, TradesRepository>();
+builder.Services.AddScoped<ITickersRepository, TickersRepository>();
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
+builder.Services.AddScoped<ITickersService, TickersService>();
 builder.Services.AddScoped<IHoldingsService, HoldingsService>();
+builder.Services.AddScoped<IHoldingsTradeService, HoldingsTradeService>();
 builder.Services.AddSingleton<IPricesService, PricesService>();
 builder.Services.AddScoped<ITradesService, TradesService>();
 

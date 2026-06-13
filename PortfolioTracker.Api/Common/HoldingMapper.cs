@@ -13,7 +13,7 @@ public static class HoldingMapper
 
     public static HoldingDto MapHolding(HoldingEntity holding, decimal totalPortfolioValue)
     {
-        var effectiveCurrentPrice = holding.CurrentPrice ?? holding.AverageCost;
+        var effectiveCurrentPrice = holding.Ticker.CurrentPrice ?? holding.AverageCost;
         var totalCostInvested = holding.ShareCount * holding.AverageCost;
         var marketValue = holding.ShareCount * effectiveCurrentPrice;
         var unrealizedPL = marketValue - totalCostInvested;
@@ -23,12 +23,13 @@ public static class HoldingMapper
         return new HoldingDto(
             holding.Id,
             holding.UserId,
-            holding.Ticker,
+            holding.TickerId,
+            holding.Ticker.Symbol,
             holding.CompanyName,
             holding.ShareCount,
             holding.AverageCost,
-            holding.CurrentPrice,
-            holding.PriceLastUpdatedAt,
+            holding.Ticker.CurrentPrice,
+            holding.Ticker.PriceLastUpdatedAt,
             holding.Sector,
             holding.Categories,
             holding.Notes,
@@ -45,6 +46,6 @@ public static class HoldingMapper
 
     public static decimal CalculateTotalPortfolioValue(IEnumerable<HoldingEntity> holdings)
     {
-        return holdings.Sum(holding => holding.ShareCount * (holding.CurrentPrice ?? holding.AverageCost));
+        return holdings.Sum(holding => holding.ShareCount * (holding.Ticker.CurrentPrice ?? holding.AverageCost));
     }
 }

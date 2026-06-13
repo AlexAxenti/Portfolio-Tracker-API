@@ -6,7 +6,9 @@ public sealed class TradeEntity
 
     public Guid UserId { get; set; }
 
-    public string Ticker { get; set; } = string.Empty;
+    public Guid TickerId { get; set; }
+
+    public TickerEntity Ticker { get; set; } = null!;
 
     public TradeType Type { get; set; }
 

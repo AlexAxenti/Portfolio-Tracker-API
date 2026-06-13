@@ -5,6 +5,7 @@ namespace PortfolioTracker.Api.DTOs.Trades;
 public sealed record TradeDto(
     Guid Id,
     Guid UserId,
+    Guid TickerId,
     string Ticker,
     TradeType Type,
     decimal Quantity,

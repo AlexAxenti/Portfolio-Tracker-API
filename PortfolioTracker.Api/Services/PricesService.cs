@@ -44,17 +44,21 @@ public sealed class PricesService(
 
         using var scope = serviceScopeFactory.CreateScope();
         var holdingsRepository = scope.ServiceProvider.GetRequiredService<IHoldingsRepository>();
+        var tickersRepository = scope.ServiceProvider.GetRequiredService<ITickersRepository>();
         var currentUserService = scope.ServiceProvider.GetRequiredService<ICurrentUserService>();
         var holdings = await holdingsRepository.GetAllForUpdateAsync(currentUserService.UserId);
         var now = DateTime.UtcNow;
         var staleCutoff = now.Subtract(PriceRefreshTtl);
-        var staleTickers = holdings
-            .Where(holding => IsStale(holding, staleCutoff))
-            .Select(holding => holding.Ticker)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+        var tickerIds = holdings
+            .Select(holding => holding.TickerId)
+            .Distinct()
+            .ToList();
+        var tickers = await tickersRepository.GetByIdsForUpdateAsync(tickerIds);
+        var staleTickers = tickers
+            .Where(ticker => IsStale(ticker, staleCutoff))
             .ToList();
 
-        var pricesByTicker = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        var hasUpdatedTickers = false;
 
         foreach (var ticker in staleTickers)
         {
@@ -63,37 +67,31 @@ public sealed class PricesService(
                 continue;
             }
 
-            var currentPrice = await GetCurrentPriceAsync(ticker, apiKey);
+            var currentPrice = await GetCurrentPriceAsync(ticker.Symbol, apiKey);
 
             if (currentPrice is > 0)
             {
-                pricesByTicker[ticker] = DecimalHelpers.RoundToThreeDecimals(currentPrice.Value);
-            }
-        }
-
-        if (pricesByTicker.Count == 0)
-        {
-            return HoldingMapper.MapHoldings(holdings);
-        }
-
-        var hasUpdatedHoldings = false;
-
-        foreach (var holding in holdings)
-        {
-            if (!pricesByTicker.TryGetValue(holding.Ticker, out var currentPrice))
-            {
+                ticker.CurrentPrice = DecimalHelpers.RoundToThreeDecimals(currentPrice.Value);
+                ticker.PriceLastUpdatedAt = now;
+                ticker.IsValid = true;
+                ticker.LastPriceFetchFailedAt = null;
+                ticker.LastPriceFetchError = null;
+                ticker.ConsecutiveFailureCount = 0;
+                ticker.UpdatedAt = now;
+                hasUpdatedTickers = true;
                 continue;
             }
 
-            holding.CurrentPrice = currentPrice;
-            holding.PriceLastUpdatedAt = now;
-            holding.UpdatedAt = now;
-            hasUpdatedHoldings = true;
+            ticker.LastPriceFetchFailedAt = now;
+            ticker.LastPriceFetchError = "Finnhub did not return a positive current price.";
+            ticker.ConsecutiveFailureCount += 1;
+            ticker.UpdatedAt = now;
+            hasUpdatedTickers = true;
         }
 
-        if (hasUpdatedHoldings)
+        if (hasUpdatedTickers)
         {
-            await holdingsRepository.SaveChangesAsync();
+            await tickersRepository.SaveChangesAsync();
         }
 
         return HoldingMapper.MapHoldings(holdings);
@@ -145,9 +143,9 @@ public sealed class PricesService(
         }
     }
 
-    private static bool IsStale(HoldingEntity holding, DateTime staleCutoff)
+    private static bool IsStale(TickerEntity ticker, DateTime staleCutoff)
     {
-        return holding.PriceLastUpdatedAt is null || holding.PriceLastUpdatedAt.Value < staleCutoff;
+        return ticker.PriceLastUpdatedAt is null || ticker.PriceLastUpdatedAt.Value < staleCutoff;
     }
 
     public void Dispose()

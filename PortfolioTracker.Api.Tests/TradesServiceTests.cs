@@ -35,8 +35,11 @@ public sealed class TradesServiceTests
 
         await using (var dbContext = CreateDbContext(databaseName, databaseRoot))
         {
-            var holdingAfterBuy = await dbContext.Holdings.AsNoTracking().SingleOrDefaultAsync(holding =>
-                holding.UserId == userId && holding.Ticker == "OSCR");
+            var holdingAfterBuy = await dbContext.Holdings
+                .AsNoTracking()
+                .Include(holding => holding.Ticker)
+                .SingleOrDefaultAsync(holding =>
+                    holding.UserId == userId && holding.Ticker.Symbol == "OSCR");
             Assert.NotNull(holdingAfterBuy);
             Assert.Equal(10m, holdingAfterBuy.ShareCount);
             Assert.Equal(15m, holdingAfterBuy.AverageCost);
@@ -58,8 +61,11 @@ public sealed class TradesServiceTests
 
         await using (var dbContext = CreateDbContext(databaseName, databaseRoot))
         {
-            var holdingAfterPartialSell = await dbContext.Holdings.AsNoTracking().SingleOrDefaultAsync(holding =>
-                holding.UserId == userId && holding.Ticker == "OSCR");
+            var holdingAfterPartialSell = await dbContext.Holdings
+                .AsNoTracking()
+                .Include(holding => holding.Ticker)
+                .SingleOrDefaultAsync(holding =>
+                    holding.UserId == userId && holding.Ticker.Symbol == "OSCR");
             Assert.NotNull(holdingAfterPartialSell);
             Assert.Equal(5m, holdingAfterPartialSell.ShareCount);
             Assert.Equal(15m, holdingAfterPartialSell.AverageCost);
@@ -81,8 +87,11 @@ public sealed class TradesServiceTests
 
         await using (var dbContext = CreateDbContext(databaseName, databaseRoot))
         {
-            var holdingAfterFinalSell = await dbContext.Holdings.AsNoTracking().SingleOrDefaultAsync(holding =>
-                holding.UserId == userId && holding.Ticker == "OSCR");
+            var holdingAfterFinalSell = await dbContext.Holdings
+                .AsNoTracking()
+                .Include(holding => holding.Ticker)
+                .SingleOrDefaultAsync(holding =>
+                    holding.UserId == userId && holding.Ticker.Symbol == "OSCR");
             Assert.Null(holdingAfterFinalSell);
         }
     }
@@ -101,8 +110,10 @@ public sealed class TradesServiceTests
         var currentUserService = new TestCurrentUserService(userId);
         var holdingsRepository = new HoldingsRepository(dbContext);
         var tradesRepository = new TradesRepository(dbContext);
-        var holdingsService = new HoldingsService(holdingsRepository, currentUserService);
-        return new TradesService(tradesRepository, holdingsService, currentUserService);
+        var tickersRepository = new TickersRepository(dbContext);
+        var tickersService = new TickersService(tickersRepository);
+        var holdingsTradeService = new HoldingsTradeService(holdingsRepository, tickersService, currentUserService);
+        return new TradesService(tradesRepository, holdingsTradeService, tickersService, currentUserService);
     }
 
     private sealed class TestCurrentUserService(Guid userId) : ICurrentUserService

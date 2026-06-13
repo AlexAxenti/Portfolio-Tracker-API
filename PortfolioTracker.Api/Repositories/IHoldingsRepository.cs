@@ -10,7 +10,7 @@ public interface IHoldingsRepository
 
     Task<HoldingEntity?> GetByIdAsync(Guid id, Guid userId);
 
-    Task<HoldingEntity?> GetByTickerAsync(string ticker, Guid userId);
+    Task<HoldingEntity?> GetByTickerIdAsync(Guid tickerId, Guid userId);
 
     Task AddAsync(HoldingEntity holding);
 
