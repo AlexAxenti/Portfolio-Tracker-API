@@ -5,8 +5,6 @@ public sealed record CreateHoldingRequest(
     string? CompanyName,
     decimal ShareCount,
     decimal AverageCost,
-    decimal? CurrentPrice,
-    DateTime? PriceLastUpdatedAt,
     string? Sector,
     List<string>? Categories,
     string? Notes,

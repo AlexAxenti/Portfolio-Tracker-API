@@ -8,7 +8,7 @@ public interface ITickersService
 
     Task<TickerEntity?> GetTickerAsync(string symbol);
 
-    Task<TickerEntity> CreateTickerAsync(string symbol);
+    Task<TickerEntity> CreateTickerAsync(string symbol, decimal? initialCurrentPrice = null);
 
     Task<TickerEntity> GetOrCreateTickerAsync(string symbol);
 }

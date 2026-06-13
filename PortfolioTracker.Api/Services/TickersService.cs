@@ -1,4 +1,5 @@
 using PortfolioTracker.Api.Entities;
+using PortfolioTracker.Api.Common;
 using PortfolioTracker.Api.Repositories;
 
 namespace PortfolioTracker.Api.Services;
@@ -15,13 +16,14 @@ public sealed class TickersService(ITickersRepository tickersRepository) : ITick
         return await tickersRepository.GetBySymbolAsync(NormalizeSymbol(symbol));
     }
 
-    public async Task<TickerEntity> CreateTickerAsync(string symbol)
+    public async Task<TickerEntity> CreateTickerAsync(string symbol, decimal? initialCurrentPrice = null)
     {
         var now = DateTime.UtcNow;
         var ticker = new TickerEntity
         {
             Id = Guid.NewGuid(),
             Symbol = NormalizeSymbol(symbol),
+            CurrentPrice = initialCurrentPrice is null ? null : DecimalHelpers.RoundToThreeDecimals(initialCurrentPrice.Value),
             IsValid = true,
             ConsecutiveFailureCount = 0,
             CreatedAt = now,

@@ -35,9 +35,8 @@ public sealed class HoldingsService(
     {
         ValidateHolding(request.Ticker, request.ShareCount, request.AverageCost);
 
-        var ticker = await tickersService.GetOrCreateTickerAsync(request.Ticker);
+        var ticker = await GetOrCreateTickerForHoldingAsync(request.Ticker, request.AverageCost);
         await EnsureTickerIsAvailableAsync(ticker);
-        ApplyTickerPriceFromRequest(ticker, request.CurrentPrice, request.PriceLastUpdatedAt);
 
         var now = DateTime.UtcNow;
         var holding = new HoldingEntity
@@ -73,9 +72,8 @@ public sealed class HoldingsService(
             return null;
         }
 
-        var ticker = await tickersService.GetOrCreateTickerAsync(request.Ticker);
+        var ticker = await GetOrCreateTickerForHoldingAsync(request.Ticker, request.AverageCost);
         await EnsureTickerIsAvailableAsync(ticker, id);
-        ApplyTickerPriceFromRequest(ticker, request.CurrentPrice, request.PriceLastUpdatedAt);
 
         holding.TickerId = ticker.Id;
         holding.Ticker = ticker;
@@ -116,6 +114,12 @@ public sealed class HoldingsService(
         }
     }
 
+    private async Task<TickerEntity> GetOrCreateTickerForHoldingAsync(string symbol, decimal averageCost)
+    {
+        return await tickersService.GetTickerAsync(symbol)
+            ?? await tickersService.CreateTickerAsync(symbol, averageCost);
+    }
+
     private static void ValidateHolding(string ticker, decimal shareCount, decimal averageCost)
     {
         if (string.IsNullOrWhiteSpace(ticker))
@@ -148,17 +152,5 @@ public sealed class HoldingsService(
             .Select(category => category!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList() ?? [];
-    }
-
-    private static void ApplyTickerPriceFromRequest(TickerEntity ticker, decimal? currentPrice, DateTime? priceLastUpdatedAt)
-    {
-        if (currentPrice is null && priceLastUpdatedAt is null)
-        {
-            return;
-        }
-
-        ticker.CurrentPrice = currentPrice is null ? null : DecimalHelpers.RoundToThreeDecimals(currentPrice.Value);
-        ticker.PriceLastUpdatedAt = DateTimeHelpers.NormalizeUtcOrNull(priceLastUpdatedAt);
-        ticker.UpdatedAt = DateTime.UtcNow;
     }
 }

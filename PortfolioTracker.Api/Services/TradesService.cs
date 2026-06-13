@@ -21,7 +21,7 @@ public sealed class TradesService(
     public async Task<TradeDto> CreateTradeAsync(CreateTradeRequest request)
     {
         ValidateTrade(request.Ticker, request.Type, request.Quantity, request.Price);
-        var ticker = await tickersService.GetOrCreateTickerAsync(request.Ticker);
+        var ticker = await GetOrCreateTickerForTradeAsync(request.Ticker, request.Price);
 
         var trade = new TradeEntity
         {
@@ -54,7 +54,7 @@ public sealed class TradesService(
             return null;
         }
 
-        var ticker = await tickersService.GetOrCreateTickerAsync(request.Ticker);
+        var ticker = await GetOrCreateTickerForTradeAsync(request.Ticker, request.Price);
 
         var updatedTrade = new TradeEntity
         {
@@ -150,5 +150,11 @@ public sealed class TradesService(
     {
         var trimmedValue = value?.Trim();
         return string.IsNullOrWhiteSpace(trimmedValue) ? null : trimmedValue;
+    }
+
+    private async Task<TickerEntity> GetOrCreateTickerForTradeAsync(string symbol, decimal price)
+    {
+        return await tickersService.GetTickerAsync(symbol)
+            ?? await tickersService.CreateTickerAsync(symbol, price);
     }
 }

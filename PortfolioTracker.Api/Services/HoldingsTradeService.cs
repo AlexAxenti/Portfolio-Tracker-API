@@ -43,9 +43,6 @@ public sealed class HoldingsTradeService(
 
         if (holding is null)
         {
-            trade.Ticker.CurrentPrice ??= DecimalHelpers.RoundToThreeDecimals(trade.Price);
-            trade.Ticker.UpdatedAt = now;
-
             await holdingsRepository.AddAsync(new HoldingEntity
             {
                 Id = Guid.NewGuid(),
@@ -65,8 +62,6 @@ public sealed class HoldingsTradeService(
         holding.AverageCost = DecimalHelpers.RoundToThreeDecimals(
             ((holding.ShareCount * holding.AverageCost) + (trade.Quantity * trade.Price)) / totalShares);
         holding.ShareCount = totalShares;
-        holding.Ticker.CurrentPrice ??= DecimalHelpers.RoundToThreeDecimals(trade.Price);
-        holding.Ticker.UpdatedAt = now;
         holding.UpdatedAt = now;
 
         await holdingsRepository.UpdateAsync(holding);
