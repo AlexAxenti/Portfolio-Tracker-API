@@ -8,7 +8,8 @@ namespace PortfolioTracker.Api.Services;
 
 public sealed class TradesService(
     ITradesRepository tradesRepository,
-    IHoldingsService holdingsService,
+    IHoldingsTradeService holdingsTradeService,
+    ITickersService tickersService,
     ICurrentUserService currentUserService) : ITradesService
 {
     public async Task<IReadOnlyList<TradeDto>> GetTradesAsync()
@@ -20,21 +21,23 @@ public sealed class TradesService(
     public async Task<TradeDto> CreateTradeAsync(CreateTradeRequest request)
     {
         ValidateTrade(request.Ticker, request.Type, request.Quantity, request.Price);
+        var ticker = await tickersService.GetOrCreateTickerAsync(request.Ticker);
 
         var trade = new TradeEntity
         {
             Id = Guid.NewGuid(),
             UserId = currentUserService.UserId,
-            Ticker = NormalizeTicker(request.Ticker),
+            TickerId = ticker.Id,
+            Ticker = ticker,
             Type = request.Type,
             Quantity = request.Quantity,
             Price = DecimalHelpers.RoundToThreeDecimals(request.Price),
-            TradeDate = NormalizeUtc(request.TradeDate),
+            TradeDate = DateTimeHelpers.NormalizeUtc(request.TradeDate),
             Notes = CleanOptionalText(request.Notes),
             CreatedAt = DateTime.UtcNow
         };
 
-        await holdingsService.ApplyTradeAsync(trade);
+        await holdingsTradeService.ApplyTradeAsync(trade);
         await tradesRepository.AddAsync(trade);
 
         return MapTrade(trade);
@@ -51,31 +54,35 @@ public sealed class TradesService(
             return null;
         }
 
+        var ticker = await tickersService.GetOrCreateTickerAsync(request.Ticker);
+
         var updatedTrade = new TradeEntity
         {
             Id = existingTrade.Id,
             UserId = existingTrade.UserId,
-            Ticker = NormalizeTicker(request.Ticker),
+            TickerId = ticker.Id,
+            Ticker = ticker,
             Type = request.Type,
             Quantity = request.Quantity,
             Price = DecimalHelpers.RoundToThreeDecimals(request.Price),
-            TradeDate = NormalizeUtc(request.TradeDate),
+            TradeDate = DateTimeHelpers.NormalizeUtc(request.TradeDate),
             Notes = CleanOptionalText(request.Notes),
             CreatedAt = existingTrade.CreatedAt
         };
 
-        await holdingsService.ReverseTradeAsync(existingTrade);
+        await holdingsTradeService.ReverseTradeAsync(existingTrade);
 
         try
         {
-            await holdingsService.ApplyTradeAsync(updatedTrade);
+            await holdingsTradeService.ApplyTradeAsync(updatedTrade);
         }
         catch
         {
-            await holdingsService.ApplyTradeAsync(existingTrade);
+            await holdingsTradeService.ApplyTradeAsync(existingTrade);
             throw;
         }
 
+        existingTrade.TickerId = updatedTrade.TickerId;
         existingTrade.Ticker = updatedTrade.Ticker;
         existingTrade.Type = updatedTrade.Type;
         existingTrade.Quantity = updatedTrade.Quantity;
@@ -96,7 +103,7 @@ public sealed class TradesService(
             return false;
         }
 
-        await holdingsService.ReverseTradeAsync(existingTrade);
+        await holdingsTradeService.ReverseTradeAsync(existingTrade);
         await tradesRepository.DeleteAsync(existingTrade);
         return true;
     }
@@ -106,7 +113,8 @@ public sealed class TradesService(
         return new TradeDto(
             trade.Id,
             trade.UserId,
-            trade.Ticker,
+            trade.TickerId,
+            trade.Ticker.Symbol,
             trade.Type,
             trade.Quantity,
             trade.Price,
@@ -138,24 +146,9 @@ public sealed class TradesService(
         }
     }
 
-    private static string NormalizeTicker(string ticker)
-    {
-        return ticker.Trim().ToUpperInvariant();
-    }
-
     private static string? CleanOptionalText(string? value)
     {
         var trimmedValue = value?.Trim();
         return string.IsNullOrWhiteSpace(trimmedValue) ? null : trimmedValue;
-    }
-
-    private static DateTime NormalizeUtc(DateTime value)
-    {
-        return value.Kind switch
-        {
-            DateTimeKind.Utc => value,
-            DateTimeKind.Local => value.ToUniversalTime(),
-            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
-        };
     }
 }

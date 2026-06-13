@@ -10,16 +10,18 @@ public sealed class HoldingsRepository(AppDbContext dbContext) : IHoldingsReposi
     {
         return await dbContext.Holdings
             .AsNoTracking()
+            .Include(holding => holding.Ticker)
             .Where(holding => holding.UserId == userId)
-            .OrderBy(holding => holding.Ticker)
+            .OrderBy(holding => holding.Ticker.Symbol)
             .ToListAsync();
     }
 
     public async Task<IReadOnlyList<HoldingEntity>> GetAllForUpdateAsync(Guid userId)
     {
         return await dbContext.Holdings
+            .Include(holding => holding.Ticker)
             .Where(holding => holding.UserId == userId)
-            .OrderBy(holding => holding.Ticker)
+            .OrderBy(holding => holding.Ticker.Symbol)
             .ToListAsync();
     }
 
@@ -27,14 +29,15 @@ public sealed class HoldingsRepository(AppDbContext dbContext) : IHoldingsReposi
     {
         return await dbContext.Holdings
             .AsNoTracking()
+            .Include(holding => holding.Ticker)
             .FirstOrDefaultAsync(holding => holding.Id == id && holding.UserId == userId);
     }
 
-    public async Task<HoldingEntity?> GetByTickerAsync(string ticker, Guid userId)
+    public async Task<HoldingEntity?> GetByTickerIdAsync(Guid tickerId, Guid userId)
     {
         return await dbContext.Holdings
-            .AsNoTracking()
-            .FirstOrDefaultAsync(holding => holding.Ticker == ticker && holding.UserId == userId);
+            .Include(holding => holding.Ticker)
+            .FirstOrDefaultAsync(holding => holding.TickerId == tickerId && holding.UserId == userId);
     }
 
     public async Task AddAsync(HoldingEntity holding)

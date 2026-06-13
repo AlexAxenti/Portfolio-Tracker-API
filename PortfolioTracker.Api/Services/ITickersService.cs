@@ -1,0 +1,14 @@
+using PortfolioTracker.Api.Entities;
+
+namespace PortfolioTracker.Api.Services;
+
+public interface ITickersService
+{
+    Task<TickerEntity?> GetTickerAsync(Guid id);
+
+    Task<TickerEntity?> GetTickerAsync(string symbol);
+
+    Task<TickerEntity> CreateTickerAsync(string symbol);
+
+    Task<TickerEntity> GetOrCreateTickerAsync(string symbol);
+}

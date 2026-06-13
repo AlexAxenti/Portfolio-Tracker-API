@@ -3,6 +3,7 @@ namespace PortfolioTracker.Api.DTOs.Holdings;
 public sealed record HoldingDto(
     Guid Id,
     Guid UserId,
+    Guid TickerId,
     string Ticker,
     string? CompanyName,
     decimal ShareCount,

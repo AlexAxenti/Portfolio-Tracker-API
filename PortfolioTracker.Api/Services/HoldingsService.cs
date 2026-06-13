@@ -8,6 +8,7 @@ namespace PortfolioTracker.Api.Services;
 
 public sealed class HoldingsService(
     IHoldingsRepository holdingsRepository,
+    ITickersService tickersService,
     ICurrentUserService currentUserService) : IHoldingsService
 {
     public async Task<IReadOnlyList<HoldingDto>> GetHoldingsAsync()
@@ -34,20 +35,20 @@ public sealed class HoldingsService(
     {
         ValidateHolding(request.Ticker, request.ShareCount, request.AverageCost);
 
-        var ticker = NormalizeTicker(request.Ticker);
+        var ticker = await tickersService.GetOrCreateTickerAsync(request.Ticker);
         await EnsureTickerIsAvailableAsync(ticker);
+        ApplyTickerPriceFromRequest(ticker, request.CurrentPrice, request.PriceLastUpdatedAt);
 
         var now = DateTime.UtcNow;
         var holding = new HoldingEntity
         {
             Id = Guid.NewGuid(),
             UserId = currentUserService.UserId,
+            TickerId = ticker.Id,
             Ticker = ticker,
             CompanyName = CleanOptionalText(request.CompanyName),
             ShareCount = request.ShareCount,
             AverageCost = DecimalHelpers.RoundToThreeDecimals(request.AverageCost),
-            CurrentPrice = request.CurrentPrice is null ? null : DecimalHelpers.RoundToThreeDecimals(request.CurrentPrice.Value),
-            PriceLastUpdatedAt = NormalizeUtc(request.PriceLastUpdatedAt),
             Sector = CleanOptionalText(request.Sector),
             Categories = NormalizeCategories(request.Categories),
             Notes = CleanOptionalText(request.Notes),
@@ -72,15 +73,15 @@ public sealed class HoldingsService(
             return null;
         }
 
-        var ticker = NormalizeTicker(request.Ticker);
+        var ticker = await tickersService.GetOrCreateTickerAsync(request.Ticker);
         await EnsureTickerIsAvailableAsync(ticker, id);
+        ApplyTickerPriceFromRequest(ticker, request.CurrentPrice, request.PriceLastUpdatedAt);
 
+        holding.TickerId = ticker.Id;
         holding.Ticker = ticker;
         holding.CompanyName = CleanOptionalText(request.CompanyName);
         holding.ShareCount = request.ShareCount;
         holding.AverageCost = DecimalHelpers.RoundToThreeDecimals(request.AverageCost);
-        holding.CurrentPrice = request.CurrentPrice is null ? null : DecimalHelpers.RoundToThreeDecimals(request.CurrentPrice.Value);
-        holding.PriceLastUpdatedAt = NormalizeUtc(request.PriceLastUpdatedAt);
         holding.Sector = CleanOptionalText(request.Sector);
         holding.Categories = NormalizeCategories(request.Categories);
         holding.Notes = CleanOptionalText(request.Notes);
@@ -105,139 +106,13 @@ public sealed class HoldingsService(
         return true;
     }
 
-    public async Task ApplyTradeAsync(TradeEntity trade)
+    private async Task EnsureTickerIsAvailableAsync(TickerEntity ticker, Guid? ignoredHoldingId = null)
     {
-        if (trade.Type == TradeType.Buy)
-        {
-            await ApplyBuyTradeAsync(trade);
-            return;
-        }
-
-        await ApplySellTradeAsync(trade);
-    }
-
-    public async Task ReverseTradeAsync(TradeEntity trade)
-    {
-        if (trade.Type == TradeType.Buy)
-        {
-            await ReverseBuyTradeAsync(trade);
-            return;
-        }
-
-        await ReverseSellTradeAsync(trade);
-    }
-
-    private async Task ApplyBuyTradeAsync(TradeEntity trade)
-    {
-        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, currentUserService.UserId);
-        var now = DateTime.UtcNow;
-
-        if (holding is null)
-        {
-            await holdingsRepository.AddAsync(new HoldingEntity
-            {
-                Id = Guid.NewGuid(),
-                UserId = currentUserService.UserId,
-                Ticker = trade.Ticker,
-                ShareCount = trade.Quantity,
-                AverageCost = DecimalHelpers.RoundToThreeDecimals(trade.Price),
-                CurrentPrice = DecimalHelpers.RoundToThreeDecimals(trade.Price),
-                PurchaseDate = DateOnly.FromDateTime(trade.TradeDate),
-                CreatedAt = now,
-                UpdatedAt = now
-            });
-            return;
-        }
-
-        var totalShares = holding.ShareCount + trade.Quantity;
-        holding.AverageCost = DecimalHelpers.RoundToThreeDecimals(
-            ((holding.ShareCount * holding.AverageCost) + (trade.Quantity * trade.Price)) / totalShares);
-        holding.ShareCount = totalShares;
-        holding.CurrentPrice ??= DecimalHelpers.RoundToThreeDecimals(trade.Price);
-        holding.UpdatedAt = now;
-
-        await holdingsRepository.UpdateAsync(holding);
-    }
-
-    private async Task ApplySellTradeAsync(TradeEntity trade)
-    {
-        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, currentUserService.UserId);
-
-        if (holding is null)
-        {
-            throw new InvalidOperationException($"You do not own {trade.Ticker}.");
-        }
-
-        if (trade.Quantity > holding.ShareCount)
-        {
-            throw new InvalidOperationException($"You only own {holding.ShareCount} shares of {trade.Ticker}.");
-        }
-
-        var remainingShares = holding.ShareCount - trade.Quantity;
-
-        if (remainingShares == 0)
-        {
-            await holdingsRepository.DeleteAsync(holding);
-            return;
-        }
-
-        holding.ShareCount = remainingShares;
-        holding.UpdatedAt = DateTime.UtcNow;
-        await holdingsRepository.UpdateAsync(holding);
-    }
-
-    private async Task ReverseBuyTradeAsync(TradeEntity trade)
-    {
-        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, currentUserService.UserId);
-
-        if (holding is null || holding.ShareCount < trade.Quantity)
-        {
-            throw new InvalidOperationException($"Cannot safely reverse the {trade.Ticker} buy trade.");
-        }
-
-        var remainingShares = holding.ShareCount - trade.Quantity;
-
-        if (remainingShares == 0)
-        {
-            await holdingsRepository.DeleteAsync(holding);
-            return;
-        }
-
-        var remainingCost = (holding.ShareCount * holding.AverageCost) - (trade.Quantity * trade.Price);
-
-        if (remainingCost < 0)
-        {
-            throw new InvalidOperationException($"Cannot safely recalculate {trade.Ticker} average cost.");
-        }
-
-        holding.ShareCount = remainingShares;
-        holding.AverageCost = DecimalHelpers.RoundToThreeDecimals(remainingCost / remainingShares);
-        holding.UpdatedAt = DateTime.UtcNow;
-        await holdingsRepository.UpdateAsync(holding);
-    }
-
-    private async Task ReverseSellTradeAsync(TradeEntity trade)
-    {
-        var holding = await holdingsRepository.GetByTickerAsync(trade.Ticker, currentUserService.UserId);
-        var now = DateTime.UtcNow;
-
-        if (holding is null)
-        {
-            throw new InvalidOperationException($"Cannot safely reverse the {trade.Ticker} sell trade.");
-        }
-
-        holding.ShareCount += trade.Quantity;
-        holding.UpdatedAt = now;
-        await holdingsRepository.UpdateAsync(holding);
-    }
-
-    private async Task EnsureTickerIsAvailableAsync(string ticker, Guid? ignoredHoldingId = null)
-    {
-        var duplicate = await holdingsRepository.GetByTickerAsync(ticker, currentUserService.UserId);
+        var duplicate = await holdingsRepository.GetByTickerIdAsync(ticker.Id, currentUserService.UserId);
 
         if (duplicate is not null && duplicate.Id != ignoredHoldingId)
         {
-            throw new InvalidOperationException($"You already own {ticker}.");
+            throw new InvalidOperationException($"You already own {ticker.Symbol}.");
         }
     }
 
@@ -259,11 +134,6 @@ public sealed class HoldingsService(
         }
     }
 
-    private static string NormalizeTicker(string ticker)
-    {
-        return ticker.Trim().ToUpperInvariant();
-    }
-
     private static string? CleanOptionalText(string? value)
     {
         var trimmedValue = value?.Trim();
@@ -280,18 +150,15 @@ public sealed class HoldingsService(
             .ToList() ?? [];
     }
 
-    private static DateTime? NormalizeUtc(DateTime? value)
+    private static void ApplyTickerPriceFromRequest(TickerEntity ticker, decimal? currentPrice, DateTime? priceLastUpdatedAt)
     {
-        return value is null ? null : NormalizeUtc(value.Value);
-    }
-
-    private static DateTime NormalizeUtc(DateTime value)
-    {
-        return value.Kind switch
+        if (currentPrice is null && priceLastUpdatedAt is null)
         {
-            DateTimeKind.Utc => value,
-            DateTimeKind.Local => value.ToUniversalTime(),
-            _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
-        };
+            return;
+        }
+
+        ticker.CurrentPrice = currentPrice is null ? null : DecimalHelpers.RoundToThreeDecimals(currentPrice.Value);
+        ticker.PriceLastUpdatedAt = DateTimeHelpers.NormalizeUtcOrNull(priceLastUpdatedAt);
+        ticker.UpdatedAt = DateTime.UtcNow;
     }
 }
