@@ -1,4 +1,6 @@
+using System.Net;
 using System.Net.Http.Json;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -34,9 +36,9 @@ public sealed class PriceRefreshWorker(
 
     private readonly TokenBucketRateLimiter perMinuteLimiter = new(new TokenBucketRateLimiterOptions
     {
-        TokenLimit = 60,
-        TokensPerPeriod = 60,
-        ReplenishmentPeriod = TimeSpan.FromMinutes(1),
+        TokenLimit = 55,
+        TokensPerPeriod = 55,
+        ReplenishmentPeriod = TimeSpan.FromMinutes(1).Add(TimeSpan.FromSeconds(5)),
         AutoReplenishment = true,
         QueueLimit = 1,
         QueueProcessingOrder = QueueProcessingOrder.OldestFirst
@@ -105,6 +107,15 @@ public sealed class PriceRefreshWorker(
                 await ProcessMessageAsync(message, stoppingToken);
 
                 await channel.BasicAckAsync(ea.DeliveryTag, multiple: false);
+            }
+            catch (FinnhubRateLimitedException ex)
+            {
+                logger.LogWarning(ex, "Finnhub rate limit was hit. Requeueing price refresh message.");
+
+                await channel.BasicNackAsync(
+                    deliveryTag: ea.DeliveryTag,
+                    multiple: false,
+                    requeue: true);
             }
             catch (Exception ex)
             {
@@ -191,7 +202,7 @@ public sealed class PriceRefreshWorker(
 
         await AcquireFinnhubRequestPermitAsync(
             perMinuteLimiter,
-            "per-minute",
+            "per-65-second",
             cancellationToken);
     }
 
@@ -229,8 +240,29 @@ public sealed class PriceRefreshWorker(
 
         try
         {
-            var quote = await httpClient.GetFromJsonAsync<FinnhubQuoteResponse>(
+            using var response = await httpClient.GetAsync(
                 requestUrl,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+
+            if (response.StatusCode == HttpStatusCode.TooManyRequests)
+            {
+                var retryDelay = GetRetryDelay(response);
+                var waitingMessage =
+                    $"Finnhub returned 429 for {ticker}. Waiting {retryDelay.TotalSeconds:N0}s before requeueing.";
+                logger.LogWarning("{WaitingMessage}", waitingMessage);
+
+                await Task.Delay(retryDelay, cancellationToken);
+
+                throw new FinnhubRateLimitedException(ticker, retryDelay);
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var quote = await response.Content.ReadFromJsonAsync<FinnhubQuoteResponse>(
                 cancellationToken);
             return quote?.CurrentPrice;
         }
@@ -248,6 +280,44 @@ public sealed class PriceRefreshWorker(
         }
     }
 
+    private static TimeSpan GetRetryDelay(HttpResponseMessage response)
+    {
+        var retryAfter = response.Headers.RetryAfter;
+
+        if (retryAfter?.Delta is { } delta && delta > TimeSpan.Zero)
+        {
+            return delta;
+        }
+
+        if (retryAfter?.Date is { } retryAt)
+        {
+            var delay = retryAt.Subtract(DateTimeOffset.UtcNow);
+
+            if (delay > TimeSpan.Zero)
+            {
+                return delay;
+            }
+        }
+
+        if (response.Headers.TryGetValues("X-Ratelimit-Reset", out var resetValues))
+        {
+            var resetValue = resetValues.FirstOrDefault();
+
+            if (long.TryParse(resetValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var resetUnixSeconds))
+            {
+                var resetAt = DateTimeOffset.FromUnixTimeSeconds(resetUnixSeconds);
+                var delay = resetAt.Subtract(DateTimeOffset.UtcNow).Add(TimeSpan.FromSeconds(1));
+
+                if (delay > TimeSpan.Zero)
+                {
+                    return delay;
+                }
+            }
+        }
+
+        return TimeSpan.FromSeconds(15);
+    }
+
     public override void Dispose()
     {
         perSecondLimiter.Dispose();
@@ -257,4 +327,7 @@ public sealed class PriceRefreshWorker(
 
     private sealed record FinnhubQuoteResponse(
         [property: JsonPropertyName("c")] decimal? CurrentPrice);
+
+    private sealed class FinnhubRateLimitedException(string ticker, TimeSpan retryDelay)
+        : Exception($"Finnhub returned 429 for {ticker}. Requeued after waiting {retryDelay.TotalSeconds:N0}s.");
 }

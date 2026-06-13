@@ -45,7 +45,5 @@ public sealed class RabbitMqMessagePublisher(IOptions<RabbitMqOptions> options) 
             basicProperties: properties,
             body: body,
             cancellationToken: cancellationToken);
-
-        Console.WriteLine($"Published: {message}");
     }
 }
