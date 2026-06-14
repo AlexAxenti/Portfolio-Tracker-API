@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using System.Threading.RateLimiting;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -34,6 +35,20 @@ builder.Services.AddRateLimiter(options =>
             {
                 PermitLimit = 10,
                 Window = TimeSpan.FromMinutes(1),
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0
+            }));
+
+    options.AddPolicy("price-refresh", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey:
+                httpContext.User.FindFirstValue(JwtRegisteredClaimNames.Sub) ??
+                httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ??
+                "anonymous",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(15),
                 QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
                 QueueLimit = 0
             }));
@@ -114,9 +129,9 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseCors(AngularCorsPolicy);
-app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 app.MapControllers();
 
 app.Run();

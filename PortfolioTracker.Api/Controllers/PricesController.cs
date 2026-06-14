@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using PortfolioTracker.Api.DTOs.Prices;
 using PortfolioTracker.Api.Services;
 using PortfolioTracker.Api.Services.Messaging;
@@ -11,6 +12,7 @@ namespace PortfolioTracker.Api.Controllers;
 [Route("api/[controller]")]
 public sealed class PricesController(IPricesService pricesService) : ControllerBase
 {
+    [EnableRateLimiting("price-refresh")]
     [HttpPost("refresh-prices")]
     public async Task<ActionResult<PriceRefreshQueuedResponse>> RefreshPrices()
     {
