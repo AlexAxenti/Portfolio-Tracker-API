@@ -62,5 +62,5 @@ jobs:
           script: |
             cd ~/production
             docker compose pull portfolio-tracker-api
-            docker compose up -d portfolio-tracker-api
+            docker compose up -d rabbitmq portfolio-tracker-api
             docker image prune -f
