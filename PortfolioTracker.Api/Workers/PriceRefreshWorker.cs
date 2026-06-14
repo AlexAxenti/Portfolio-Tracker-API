@@ -8,6 +8,7 @@ using System.Threading.RateLimiting;
 using PortfolioTracker.Api.Common;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using RabbitMQ.Client.Exceptions;
 using Microsoft.Extensions.Options;
 using PortfolioTracker.Api.Configuration;
 using PortfolioTracker.Api.DTOs.Messaging;
@@ -23,6 +24,7 @@ public sealed class PriceRefreshWorker(
     ILogger<PriceRefreshWorker> logger) : BackgroundService
 {
     private readonly RabbitMqOptions rabbitMqOptions = options.Value;
+    private static readonly TimeSpan RabbitMqReconnectDelay = TimeSpan.FromSeconds(5);
 
     private readonly TokenBucketRateLimiter perSecondLimiter = new(new TokenBucketRateLimiterOptions
     {
@@ -46,16 +48,46 @@ public sealed class PriceRefreshWorker(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await RunConsumerAsync(stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (BrokerUnreachableException ex)
+            {
+                await LogAndWaitForReconnectAsync(ex, stoppingToken);
+            }
+            catch (OperationInterruptedException ex)
+            {
+                await LogAndWaitForReconnectAsync(ex, stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Price refresh worker stopped unexpectedly. Retrying RabbitMQ connection.");
+                await WaitForReconnectAsync(stoppingToken);
+            }
+        }
+    }
+
+    private async Task RunConsumerAsync(CancellationToken stoppingToken)
+    {
         var factory = new ConnectionFactory
         {
             HostName = rabbitMqOptions.HostName,
             Port = rabbitMqOptions.Port,
             UserName = rabbitMqOptions.UserName,
-            Password = rabbitMqOptions.Password
+            Password = rabbitMqOptions.Password,
+            AutomaticRecoveryEnabled = true,
+            NetworkRecoveryInterval = RabbitMqReconnectDelay
         };
 
-        var connection = await factory.CreateConnectionAsync(stoppingToken);
-        var channel = await connection.CreateChannelAsync(cancellationToken: stoppingToken);
+        await using var connection = await factory.CreateConnectionAsync(stoppingToken);
+        await using var channel = await connection.CreateChannelAsync(cancellationToken: stoppingToken);
 
         await channel.QueueDeclareAsync(
             queue: rabbitMqOptions.PriceRefreshQueueName,
@@ -135,6 +167,27 @@ public sealed class PriceRefreshWorker(
             cancellationToken: stoppingToken);
 
         await Task.Delay(Timeout.Infinite, stoppingToken);
+    }
+
+    private async Task LogAndWaitForReconnectAsync(Exception ex, CancellationToken stoppingToken)
+    {
+        logger.LogWarning(
+            ex,
+            "RabbitMQ is unavailable for the price refresh worker. Retrying in {RetryDelaySeconds} seconds.",
+            RabbitMqReconnectDelay.TotalSeconds);
+
+        await WaitForReconnectAsync(stoppingToken);
+    }
+
+    private static async Task WaitForReconnectAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            await Task.Delay(RabbitMqReconnectDelay, stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+        }
     }
 
     private async Task ProcessMessageAsync(
