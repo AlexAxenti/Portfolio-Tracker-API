@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using PortfolioTracker.Api.DTOs.Holdings;
+using Microsoft.AspNetCore.RateLimiting;
+using PortfolioTracker.Api.DTOs.Prices;
 using PortfolioTracker.Api.Services;
+using PortfolioTracker.Api.Services.Messaging;
 
 namespace PortfolioTracker.Api.Controllers;
 
@@ -10,10 +12,21 @@ namespace PortfolioTracker.Api.Controllers;
 [Route("api/[controller]")]
 public sealed class PricesController(IPricesService pricesService) : ControllerBase
 {
+    [EnableRateLimiting("price-refresh")]
     [HttpPost("refresh-prices")]
-    public async Task<ActionResult<IReadOnlyList<HoldingDto>>> RefreshPrices()
+    public async Task<ActionResult<PriceRefreshQueuedResponse>> RefreshPrices()
     {
-        var holdings = await pricesService.RefreshPricesAsync();
-        return Ok(holdings);
+        try
+        {
+            var response = await pricesService.RefreshPricesAsync();
+            return Accepted(response);
+        }
+        catch (MessageBrokerUnavailableException ex)
+        {
+            return Problem(
+                title: "Price refresh is temporarily unavailable.",
+                detail: ex.Message,
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
     }
 }
